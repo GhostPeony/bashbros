@@ -10,174 +10,119 @@
   🤝 Your Friendly Bash Agent Helper
 ```
 
-> "I watch your agent's back so you don't have to."
+BashBros protects CLI agents with security middleware AND supercharges them with an AI sidekick that knows your system.
 
-BashBros is a PTY middleware that protects your CLI agents AND supercharges them with a trained AI sidekick that knows your system inside-out.
+## Install
 
-## Features
-
-### Security Layer
-- **Command filtering** - Allow/block commands by pattern
-- **Path sandboxing** - Restrict filesystem access
-- **Secrets protection** - Block access to .env, credentials, SSH keys
-- **Audit logging** - Full command history for debugging and compliance
-- **Rate limiting** - Prevent runaway agents from going wild
-
-### Bash Bro (AI Sidekick)
-- **System awareness** - Knows your Python version, installed tools, project type
-- **Task routing** - Routes simple commands to your local model, saves API $$$
-- **Command suggestions** - Suggests next commands based on context and history
-- **Background tasks** - Run tests, builds in parallel while you keep coding
-- **Works with Ollama** - Use your fine-tuned Qwen or other local models
+```bash
+npm install -g bashbros
+```
 
 ## Quick Start
 
 ```bash
-# Install
-npm install -g bashbros
-
-# Set up for your project
-bashbros init
-
-# Scan your system (Bash Bro learns your environment)
-bashbros scan
-
-# Start protection + AI assistance
-bashbros watch
+bashbros init      # Interactive setup
+bashbros scan      # Learn your system
+bashbros watch     # Start protection
 ```
 
-## How It Works
+## Features
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         BashBros Layer                              │
-│  ┌─────────────────┐                     ┌─────────────────────┐   │
-│  │  Security       │                     │  Bash Bro           │   │
-│  │  (5 modules)    │                     │  (Your trained SLM) │   │
-│  └─────────────────┘                     └─────────────────────┘   │
-│           │                                        │                │
-│           ▼                                        ▼                │
-│  ┌─────────────────────────────────────────────────────────────┐   │
-│  │                    Command Router                            │   │
-│  │   "Should Claude handle this, or can my Bash Bro do it?"    │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
-```
+### Security (5 modules)
+- **Command filter** - Allow/block by pattern
+- **Path sandbox** - Restrict filesystem access
+- **Secrets guard** - Block .env, keys, credentials
+- **Audit log** - Full command history
+- **Rate limiter** - Prevent runaway agents
+
+### AI Sidekick (Ollama)
+- **System awareness** - Knows your tools, versions, project type
+- **Task routing** - Simple → local model, complex → main agent
+- **Suggestions** - Context-aware next commands
+- **Background tasks** - Tests/builds run in parallel
 
 ## Commands
 
-### Security Commands
+### Security
 
 | Command | Description |
 |---------|-------------|
-| `bashbros init` | Interactive setup wizard |
-| `bashbros watch` | Start protection |
-| `bashbros doctor` | Check configuration |
-| `bashbros allow <cmd>` | Allow a specific command |
-| `bashbros audit` | View command history |
+| `init` | Setup wizard |
+| `watch` | Start protection |
+| `doctor` | Check config |
+| `allow <cmd>` | Allow command (`--once` for session only) |
+| `audit` | View history (`--violations` for blocked only) |
 
-### Bash Bro Commands
+### Bash Bro
 
 | Command | Description |
 |---------|-------------|
-| `bashbros scan` | Scan system & project environment |
-| `bashbros status` | Show Bash Bro status and system info |
-| `bashbros suggest` | Get command suggestions |
-| `bashbros route <cmd>` | Check how a command would be routed |
-| `bashbros run <cmd>` | Execute through Bash Bro |
-| `bashbros tasks` | List background tasks |
+| `scan` | Scan system and project |
+| `status` | Show system info |
+| `suggest` | Get command suggestions |
+| `route <cmd>` | Check routing decision |
+| `run <cmd>` | Execute via Bash Bro (`-b` for background) |
+| `tasks` | List background tasks |
 
-## System Awareness
+### AI (requires Ollama)
 
-Bash Bro scans and remembers your environment:
+| Command | Description |
+|---------|-------------|
+| `explain <cmd>` | Explain what a command does |
+| `fix <cmd>` | Fix a failed command (`-e` for error message) |
+| `ai <prompt>` | Ask anything |
+| `script <desc>` | Generate shell script (`-o` to save) |
+| `safety <cmd>` | Analyze security risks |
+| `help-ai <topic>` | Get help on any topic |
+| `do <desc>` | Natural language → command (`-x` to execute) |
+| `models` | List available Ollama models |
 
-```bash
-$ bashbros scan
-
-## System Context
-- Platform: win32 (x64)
-- Shell: C:\Windows\System32\cmd.exe
-- CPU: 16 cores, RAM: 32GB
-
-- Python: 3.12.0
-- Node: 20.10.0
-- Git: 2.43.0
-- Docker: 24.0.7
-- Ollama: 0.1.27
-  Models: qwen2.5-coder:7b, llama3.2:3b
-
-## Project: node
-Dependencies: react, typescript, vite...
-```
-
-## Task Routing
-
-Bash Bro intelligently routes commands:
+## Examples
 
 ```bash
+# Route a command
 $ bashbros route "git status"
-🤝 Route: Bash Bro
-   Reason: Git status
-   Confidence: 90%
+🤝 Route: Bash Bro (90% confidence)
 
-$ bashbros route "refactor this authentication system"
-🤖 Route: Main Agent
-   Reason: Refactoring requires reasoning
-   Confidence: 90%
+# Generate a script
+$ bashbros script "backup all .env files"
+#!/bin/bash
+find . -name "*.env" -exec cp {} {}.backup \;
 
-$ bashbros route "npm test"
-⚡ Route: Both (parallel)
-   Reason: Tests can run in background
-   Confidence: 90%
-```
+# Natural language to command
+$ bashbros do "find large files over 100mb"
+$ find . -size +100M -type f
 
-## Background Tasks
+# Explain a command
+$ bashbros explain "tar -czvf archive.tar.gz dir/"
+Creates a compressed gzip archive of dir/
 
-Run long tasks in parallel:
-
-```bash
-$ bashbros run "npm test" --background
-✓ Started background task: task_1
-  Command: npm test
-  Run 'bashbros tasks' to check status
-
-# Keep working... Bash Bro notifies you when done:
-🤝 Bash Bro: Background task ✓ completed
-   Command: npm test
-   Duration: 45s
+# Check command safety
+$ bashbros safety "rm -rf /"
+⚠ Risk Level: CRITICAL
+  This command will delete all files...
 ```
 
 ## Configuration
 
-BashBros creates a `.bashbros.yml` in your project:
+`.bashbros.yml`:
 
 ```yaml
-agent: claude-code
-profile: balanced
+agent: claude-code  # or clawdbot, aider, opencode, custom
+profile: balanced   # strict, permissive, or custom
 
 commands:
-  allow:
-    - git *
-    - npm *
-    - node *
-  block:
-    - rm -rf /
-    - curl * | bash
+  allow: [git *, npm *, node *]
+  block: [rm -rf /, curl * | bash]
 
 paths:
-  allow:
-    - .
-  block:
-    - ~/.ssh
-    - ~/.aws
+  allow: [.]
+  block: [~/.ssh, ~/.aws]
 
 secrets:
   enabled: true
   mode: block
-  patterns:
-    - .env*
-    - "*.pem"
-    - "*.key"
+  patterns: [.env*, "*.pem", "*.key"]
 
 audit:
   enabled: true
@@ -191,37 +136,51 @@ rateLimit:
 
 ## Security Profiles
 
-| Profile | Description |
-|---------|-------------|
-| **balanced** | Block dangerous commands, allow common dev tools |
-| **strict** | Allowlist only, explicit approval required |
-| **permissive** | Log everything, block only critical threats |
-| **custom** | Full manual configuration |
-
-## Integration with Ghost Gym
-
-BashBros works seamlessly with [Ghost Gym](https://github.com/GhostPeony/ghostwork) for training your own Bash Bro:
-
-1. **Capture** - BashBros logs all commands (training data)
-2. **Train** - Ghost Gym trains your local model on your patterns
-3. **Deploy** - Your trained model becomes your Bash Bro
-4. **Improve** - The more you use it, the smarter it gets
+| Profile | Behavior |
+|---------|----------|
+| `balanced` | Block dangerous, allow common dev tools |
+| `strict` | Allowlist only, explicit approval |
+| `permissive` | Log all, block critical threats only |
 
 ## Works With
 
 - [Claude Code](https://claude.ai/claude-code)
 - [Clawdbot](https://clawd.bot)
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 - [Aider](https://aider.chat)
 - [OpenCode](https://github.com/opencode-ai/opencode)
-- [Ollama](https://ollama.ai) (for local models)
-- Any CLI agent that uses bash/shell
+- [Ollama](https://ollama.ai) (local AI)
+- Any CLI agent using bash/shell
+
+## API Usage
+
+```typescript
+import { BashBros, PolicyEngine, BashBro } from 'bashbros'
+
+// Security middleware
+const bros = new BashBros(config)
+bros.on('command', (cmd, result) => console.log(cmd, result.allowed))
+bros.start()
+
+// AI features
+const bro = new BashBro()
+await bro.initialize()
+const suggestions = bro.suggest({ lastCommand: 'git status' })
+const explanation = await bro.aiExplain('tar -xzf file.tar.gz')
+```
+
+## Development
+
+```bash
+npm install
+npm run build
+npm test        # 165 tests
+```
 
 ## License
 
-MIT - see [LICENSE](LICENSE)
+MIT
 
 ## Links
 
-- Website: [bashbros.ai](https://bashbros.ai)
-- GitHub: [github.com/GhostPeony/bashbros](https://github.com/GhostPeony/bashbros)
+- [bashbros.ai](https://bashbros.ai)
+- [GitHub](https://github.com/GhostPeony/bashbros)
