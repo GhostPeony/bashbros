@@ -7,15 +7,23 @@
 
 > "I watch your agent's back so you don't have to."
 
-BashBros is a PTY middleware that protects your CLI agents (Claude Code, Clawdbot, Gemini CLI, Aider, OpenCode, and more) from running dangerous commands.
+BashBros is a PTY middleware that protects your CLI agents AND supercharges them with a trained AI sidekick that knows your system inside-out.
 
 ## Features
 
+### Security Layer
 - **Command filtering** - Allow/block commands by pattern
 - **Path sandboxing** - Restrict filesystem access
 - **Secrets protection** - Block access to .env, credentials, SSH keys
 - **Audit logging** - Full command history for debugging and compliance
 - **Rate limiting** - Prevent runaway agents from going wild
+
+### Bash Bro (AI Sidekick)
+- **System awareness** - Knows your Python version, installed tools, project type
+- **Task routing** - Routes simple commands to your local model, saves API $$$
+- **Command suggestions** - Suggests next commands based on context and history
+- **Background tasks** - Run tests, builds in parallel while you keep coding
+- **Works with Ollama** - Use your fine-tuned Qwen or other local models
 
 ## Quick Start
 
@@ -26,22 +34,34 @@ npm install -g bashbros
 # Set up for your project
 bashbros init
 
-# Start protection
+# Scan your system (Bash Bro learns your environment)
+bashbros scan
+
+# Start protection + AI assistance
 bashbros watch
 ```
 
 ## How It Works
 
-BashBros sits between your agent and the shell as a PTY (pseudo-terminal) layer. Commands flow through BashBros, which validates them against your security policies before execution.
-
 ```
-┌──────────────┐     ┌─────────────────────┐     ┌──────────┐
-│  Any Agent   │────▶│  BashBros PTY Layer │────▶│  Shell   │
-│              │◀────│  (validate & log)   │◀────│          │
-└──────────────┘     └─────────────────────┘     └──────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                         BashBros Layer                              │
+│  ┌─────────────────┐                     ┌─────────────────────┐   │
+│  │  Security       │                     │  Bash Bro           │   │
+│  │  (5 modules)    │                     │  (Your trained SLM) │   │
+│  └─────────────────┘                     └─────────────────────┘   │
+│           │                                        │                │
+│           ▼                                        ▼                │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                    Command Router                            │   │
+│  │   "Should Claude handle this, or can my Bash Bro do it?"    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Commands
+
+### Security Commands
 
 | Command | Description |
 |---------|-------------|
@@ -50,6 +70,77 @@ BashBros sits between your agent and the shell as a PTY (pseudo-terminal) layer.
 | `bashbros doctor` | Check configuration |
 | `bashbros allow <cmd>` | Allow a specific command |
 | `bashbros audit` | View command history |
+
+### Bash Bro Commands
+
+| Command | Description |
+|---------|-------------|
+| `bashbros scan` | Scan system & project environment |
+| `bashbros status` | Show Bash Bro status and system info |
+| `bashbros suggest` | Get command suggestions |
+| `bashbros route <cmd>` | Check how a command would be routed |
+| `bashbros run <cmd>` | Execute through Bash Bro |
+| `bashbros tasks` | List background tasks |
+
+## System Awareness
+
+Bash Bro scans and remembers your environment:
+
+```bash
+$ bashbros scan
+
+## System Context
+- Platform: win32 (x64)
+- Shell: C:\Windows\System32\cmd.exe
+- CPU: 16 cores, RAM: 32GB
+
+- Python: 3.12.0
+- Node: 20.10.0
+- Git: 2.43.0
+- Docker: 24.0.7
+- Ollama: 0.1.27
+  Models: qwen2.5-coder:7b, llama3.2:3b
+
+## Project: node
+Dependencies: react, typescript, vite...
+```
+
+## Task Routing
+
+Bash Bro intelligently routes commands:
+
+```bash
+$ bashbros route "git status"
+🤝 Route: Bash Bro
+   Reason: Git status
+   Confidence: 90%
+
+$ bashbros route "refactor this authentication system"
+🤖 Route: Main Agent
+   Reason: Refactoring requires reasoning
+   Confidence: 90%
+
+$ bashbros route "npm test"
+⚡ Route: Both (parallel)
+   Reason: Tests can run in background
+   Confidence: 90%
+```
+
+## Background Tasks
+
+Run long tasks in parallel:
+
+```bash
+$ bashbros run "npm test" --background
+✓ Started background task: task_1
+  Command: npm test
+  Run 'bashbros tasks' to check status
+
+# Keep working... Bash Bro notifies you when done:
+🤝 Bash Bro: Background task ✓ completed
+   Command: npm test
+   Duration: 45s
+```
 
 ## Configuration
 
@@ -102,20 +193,14 @@ rateLimit:
 | **permissive** | Log everything, block only critical threats |
 | **custom** | Full manual configuration |
 
-## When a Command is Blocked
+## Integration with Ghost Gym
 
-```
-🛡️ BashBros blocked this command
+BashBros works seamlessly with [Ghost Gym](https://github.com/GhostPeony/ghostwork) for training your own Bash Bro:
 
-  Reason: Destructive command pattern matched
-  Policy: command_filter.block[0]
-
-  To allow this command:
-    bashbros allow "rm -rf /" --once
-    bashbros allow "rm -rf /" --persist
-
-  Logged to: ~/.bashbros/audit.log
-```
+1. **Capture** - BashBros logs all commands (training data)
+2. **Train** - Ghost Gym trains your local model on your patterns
+3. **Deploy** - Your trained model becomes your Bash Bro
+4. **Improve** - The more you use it, the smarter it gets
 
 ## Works With
 
@@ -124,6 +209,7 @@ rateLimit:
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 - [Aider](https://aider.chat)
 - [OpenCode](https://github.com/opencode-ai/opencode)
+- [Ollama](https://ollama.ai) (for local models)
 - Any CLI agent that uses bash/shell
 
 ## License
