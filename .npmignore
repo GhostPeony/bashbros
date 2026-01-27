@@ -1,0 +1,15 @@
+# Source files (ship dist only)
+src/
+tsconfig.json
+tsup.config.ts
+
+# Dev files
+.github/
+.vscode/
+coverage/
+*.log
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+vitest.config.ts
