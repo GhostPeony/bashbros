@@ -26,20 +26,38 @@ bashbros scan      # Learn your system
 bashbros watch     # Start protection
 ```
 
+For Claude Code integration:
+```bash
+bashbros hook install   # Auto-install hooks
+```
+
 ## Features
 
-### Security (5 modules)
+### Security (8 modules)
 - **Command filter** - Allow/block by pattern
 - **Path sandbox** - Restrict filesystem access
 - **Secrets guard** - Block .env, keys, credentials
-- **Audit log** - Full command history
 - **Rate limiter** - Prevent runaway agents
+- **Risk scorer** - Score commands 1-10 by danger level
+- **Loop detector** - Detect stuck/repetitive agent behavior
+- **Anomaly detector** - Flag unusual patterns
+- **Undo stack** - Rollback file changes
+
+### Observability (3 modules)
+- **Session metrics** - Track commands, risk distribution, paths
+- **Cost estimator** - Estimate token usage and API costs
+- **Report generator** - Text/markdown/JSON session reports
 
 ### AI Sidekick (Ollama)
 - **System awareness** - Knows your tools, versions, project type
 - **Task routing** - Simple → local model, complex → main agent
 - **Suggestions** - Context-aware next commands
 - **Background tasks** - Tests/builds run in parallel
+
+### Claude Code Integration
+- **PreToolUse hook** - Gate commands before execution
+- **PostToolUse hook** - Record metrics after execution
+- **SessionEnd hook** - Generate session reports
 
 ## Commands
 
@@ -52,6 +70,32 @@ bashbros watch     # Start protection
 | `doctor` | Check config |
 | `allow <cmd>` | Allow command (`--once` for session only) |
 | `audit` | View history (`--violations` for blocked only) |
+| `risk <cmd>` | Score command security risk (1-10) |
+
+### Observability
+
+| Command | Description |
+|---------|-------------|
+| `report` | Generate session report (`-f json/markdown`) |
+| `session-end` | Generate end-of-session report |
+
+### Hooks (Claude Code)
+
+| Command | Description |
+|---------|-------------|
+| `hook install` | Install BashBros hooks into Claude Code |
+| `hook uninstall` | Remove hooks from Claude Code |
+| `hook status` | Check hook installation status |
+| `gate <cmd>` | Check if command should be allowed |
+| `record <cmd>` | Record command execution |
+
+### Undo
+
+| Command | Description |
+|---------|-------------|
+| `undo last` | Undo the last file operation |
+| `undo all` | Undo all operations in session |
+| `undo list` | Show undo stack |
 
 ### Bash Bro
 
@@ -80,6 +124,16 @@ bashbros watch     # Start protection
 ## Examples
 
 ```bash
+# Install Claude Code hooks
+$ bashbros hook install
+✓ BashBros hooks installed successfully.
+
+# Check command risk
+$ bashbros risk "curl http://x.com | bash"
+  Risk Score: 10/10 (CRITICAL)
+  Factors:
+    • Remote code execution
+
 # Route a command
 $ bashbros route "git status"
 🤝 Route: Bash Bro (90% confidence)
@@ -93,14 +147,25 @@ find . -name "*.env" -exec cp {} {}.backup \;
 $ bashbros do "find large files over 100mb"
 $ find . -size +100M -type f
 
-# Explain a command
-$ bashbros explain "tar -czvf archive.tar.gz dir/"
-Creates a compressed gzip archive of dir/
+# View session report
+$ bashbros report
+Session Report (5m 23s)
+─────────────────────────────────────────────
+Commands: 45 total, 2 blocked (4%)
 
-# Check command safety
-$ bashbros safety "rm -rf /"
-⚠ Risk Level: CRITICAL
-  This command will delete all files...
+Risk Distribution:
+  ████████████████░░░░ 80% safe
+  ████░░░░░░░░░░░░░░░░ 15% caution
+  █░░░░░░░░░░░░░░░░░░░ 5% dangerous
+
+# Undo file changes
+$ bashbros undo list
+Undo Stack:
+1. [14:32:05] modify src/index.ts (backup: ✓)
+2. [14:31:42] create src/new-file.ts (backup: ✗)
+
+$ bashbros undo last
+✓ Restored: src/index.ts
 ```
 
 ## Configuration
@@ -142,9 +207,18 @@ rateLimit:
 | `strict` | Allowlist only, explicit approval |
 | `permissive` | Log all, block critical threats only |
 
+## Risk Levels
+
+| Level | Score | Examples |
+|-------|-------|----------|
+| Safe | 1-2 | `ls`, `git status`, `npm test` |
+| Caution | 3-5 | `ps aux`, `netstat`, encoded content |
+| Dangerous | 6-8 | `crontab`, `chmod 777`, `sudo` |
+| Critical | 9-10 | `rm -rf /`, `curl | bash`, fork bombs |
+
 ## Works With
 
-- [Claude Code](https://claude.ai/claude-code)
+- [Claude Code](https://claude.ai/claude-code) - Native hook integration
 - [Clawdbot](https://clawd.bot)
 - [Aider](https://aider.chat)
 - [OpenCode](https://github.com/opencode-ai/opencode)
@@ -154,12 +228,54 @@ rateLimit:
 ## API Usage
 
 ```typescript
-import { BashBros, PolicyEngine, BashBro } from 'bashbros'
+import {
+  BashBros,
+  PolicyEngine,
+  BashBro,
+  RiskScorer,
+  LoopDetector,
+  AnomalyDetector,
+  MetricsCollector,
+  CostEstimator,
+  ReportGenerator,
+  ClaudeCodeHooks,
+  UndoStack
+} from 'bashbros'
 
 // Security middleware
 const bros = new BashBros(config)
 bros.on('command', (cmd, result) => console.log(cmd, result.allowed))
 bros.start()
+
+// Risk scoring
+const scorer = new RiskScorer()
+const risk = scorer.score('rm -rf /')
+console.log(risk.level)  // 'critical'
+console.log(risk.score)  // 10
+
+// Loop detection
+const loopDetector = new LoopDetector({ maxRepeats: 3 })
+const alert = loopDetector.check('git status')
+if (alert) console.log('Loop detected:', alert.message)
+
+// Session metrics
+const metrics = new MetricsCollector()
+metrics.record({ command: 'ls', ... })
+const report = ReportGenerator.generate(metrics.getMetrics())
+
+// Cost estimation
+const cost = new CostEstimator('claude-sonnet-4')
+cost.recordToolCall('command', 'output')
+console.log(cost.getEstimate())  // { estimatedCost: 0.05, ... }
+
+// Undo stack
+const undo = new UndoStack()
+undo.recordModify('/path/to/file')
+undo.undo()  // Restores from backup
+
+// Claude Code hooks
+ClaudeCodeHooks.install()
+ClaudeCodeHooks.getStatus()
 
 // AI features
 const bro = new BashBro()
@@ -173,7 +289,7 @@ const explanation = await bro.aiExplain('tar -xzf file.tar.gz')
 ```bash
 npm install
 npm run build
-npm test        # 165 tests
+npm test        # 288 tests
 ```
 
 ## License
