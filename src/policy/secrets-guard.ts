@@ -26,14 +26,20 @@ export class SecretsGuard {
     // Check for common secret-leaking patterns in commands
     // SECURITY FIX: Enhanced patterns to catch bypass attempts
     const dangerousPatterns = [
-      // Direct file access
-      /cat\s+.*\.env/i,
-      /cat\s+.*\.pem/i,
-      /cat\s+.*\.key/i,
-      /cat\s+.*credentials/i,
-      /cat\s+.*secret/i,
-      /cat\s+.*password/i,
-      /cat\s+.*token/i,
+      // Direct file access (multiple readers)
+      /(cat|head|tail|less|more|bat)\s+.*\.env/i,
+      /(cat|head|tail|less|more|bat)\s+.*\.pem/i,
+      /(cat|head|tail|less|more|bat)\s+.*\.key/i,
+      /(cat|head|tail|less|more|bat)\s+.*credentials/i,
+      /(cat|head|tail|less|more|bat)\s+.*secret/i,
+      /(cat|head|tail|less|more|bat)\s+.*password/i,
+      /(cat|head|tail|less|more|bat)\s+.*token/i,
+
+      // Python/Perl/Ruby file readers
+      /python.*open\s*\(.*\.(env|pem|key)/i,
+      /python.*-c.*open/i,
+      /perl.*-[pne].*\.(env|pem|key)/i,
+      /ruby.*-e.*File\.(read|open)/i,
 
       // Environment variable exposure
       /echo\s+\$\w*(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|API)/i,

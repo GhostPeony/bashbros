@@ -46,10 +46,15 @@ const DATA_EXFIL: RiskPattern[] = [
   { pattern: /curl.*\|\s*(bash|sh)/, score: 10, factor: 'Remote code execution' },
   { pattern: /wget.*\|\s*(bash|sh)/, score: 10, factor: 'Remote code execution' },
   { pattern: /\bnc\s+-[elp]/, score: 9, factor: 'Netcat listener/connection' },
+  { pattern: /\b(ncat|netcat|socat)\s/, score: 9, factor: 'Network tool' },
   { pattern: /\bscp\s+.*@/, score: 6, factor: 'Remote file copy' },
   { pattern: /\brsync\s+.*@/, score: 6, factor: 'Remote sync' },
   { pattern: /curl.*-d.*\$/, score: 7, factor: 'Data exfiltration via curl' },
   { pattern: /base64.*\|.*curl/, score: 8, factor: 'Encoded data exfiltration' },
+  { pattern: /python.*-m\s+http\.server/, score: 8, factor: 'HTTP server exposure' },
+  { pattern: /\baws\s+s3\s+(cp|sync|mv)/, score: 7, factor: 'Cloud data transfer' },
+  { pattern: /\bgsutil\s+(cp|rsync|mv)/, score: 7, factor: 'Cloud data transfer' },
+  { pattern: /\baz\s+storage\s+blob/, score: 7, factor: 'Cloud data transfer' },
 ]
 
 const DESTRUCTIVE: RiskPattern[] = [
@@ -81,6 +86,31 @@ const EVASION: RiskPattern[] = [
   { pattern: /\b\/dev\/null.*2>&1/, score: 3, factor: 'Output suppression' },
   { pattern: /base64\s+-d/, score: 5, factor: 'Base64 decoding' },
   { pattern: /\beval\s+/, score: 6, factor: 'Dynamic code execution' },
+  { pattern: /\$'\\x[0-9a-f]/, score: 7, factor: 'ANSI-C quoting bypass' },
+  { pattern: /python.*-c\s+['"]/, score: 5, factor: 'Python code execution' },
+  { pattern: /perl.*-e\s+['"]/, score: 5, factor: 'Perl code execution' },
+  { pattern: /ruby.*-e\s+['"]/, score: 5, factor: 'Ruby code execution' },
+  { pattern: /node.*-e\s+['"]/, score: 5, factor: 'Node code execution' },
+]
+
+const CONTAINER_ESCAPE: RiskPattern[] = [
+  { pattern: /docker\s+run.*-v\s+\/[^\/]*:/, score: 8, factor: 'Docker root mount' },
+  { pattern: /docker\s+run.*--privileged/, score: 9, factor: 'Privileged container' },
+  { pattern: /docker\s+exec.*-it/, score: 5, factor: 'Container shell access' },
+  { pattern: /kubectl\s+exec/, score: 6, factor: 'Kubernetes exec' },
+  { pattern: /kubectl\s+cp/, score: 6, factor: 'Kubernetes file copy' },
+  { pattern: /docker\s+cp.*:\//, score: 6, factor: 'Docker file extraction' },
+]
+
+const FILE_READERS: RiskPattern[] = [
+  { pattern: /\b(head|tail)\s+.*\.(env|pem|key|secret)/i, score: 6, factor: 'Sensitive file read' },
+  { pattern: /\b(less|more)\s+.*\.(env|pem|key|secret)/i, score: 6, factor: 'Sensitive file read' },
+  { pattern: /\b(strings|xxd|od)\s+/, score: 4, factor: 'Binary file inspection' },
+  { pattern: /\bfind\s+.*-exec\s+cat/, score: 7, factor: 'Find with cat exec' },
+  { pattern: /\bfind\s+.*\|\s*xargs\s+(cat|head|tail)/, score: 7, factor: 'Find piped to reader' },
+  { pattern: /\bxargs\s+(cat|head|tail|less)/, score: 6, factor: 'Xargs file read' },
+  { pattern: /\bawk\s+.*\.(env|pem|key)/i, score: 6, factor: 'Awk sensitive file' },
+  { pattern: /\bsed\s+.*\.(env|pem|key)/i, score: 5, factor: 'Sed sensitive file' },
 ]
 
 const SAFE_COMMANDS: RiskPattern[] = [
@@ -105,6 +135,8 @@ const ALL_PATTERNS: RiskPattern[] = [
   ...DESTRUCTIVE,
   ...PRIVILEGE_ESCALATION,
   ...EVASION,
+  ...CONTAINER_ESCAPE,
+  ...FILE_READERS,
 ]
 
 export class RiskScorer {

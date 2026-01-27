@@ -66,12 +66,15 @@ export class PolicyEngine {
   private extractPaths(command: string): string[] {
     const paths: string[] = []
 
+    // Remove quotes for analysis but preserve content
+    const unquoted = command.replace(/["']/g, ' ')
+
     // Simple path extraction - look for file-like arguments
-    const tokens = command.split(/\s+/)
+    const tokens = unquoted.split(/\s+/)
 
     for (const token of tokens) {
-      // Skip flags
-      if (token.startsWith('-')) continue
+      // Skip flags and empty tokens
+      if (token.startsWith('-') || !token) continue
 
       // Check if it looks like a path
       if (
@@ -79,11 +82,33 @@ export class PolicyEngine {
         token.startsWith('./') ||
         token.startsWith('../') ||
         token.startsWith('~/') ||
+        token.startsWith('$HOME') ||
+        token.startsWith('${HOME}') ||
         token.includes('.env') ||
         token.includes('.pem') ||
-        token.includes('.key')
+        token.includes('.key') ||
+        token.includes('.ssh') ||
+        token.includes('.aws') ||
+        token.includes('.gnupg') ||
+        token.includes('.kube') ||
+        token.includes('credentials') ||
+        token.includes('secret') ||
+        token.includes('password') ||
+        token.includes('id_rsa') ||
+        token.includes('id_ed25519') ||
+        // Files with extensions that might be sensitive
+        /\.(env|pem|key|crt|pfx|p12|jks|keystore)$/i.test(token)
       ) {
         paths.push(token)
+      }
+    }
+
+    // Also extract paths from variable assignments
+    const varAssignments = command.match(/\w+=[^\s;]+/g) || []
+    for (const assignment of varAssignments) {
+      const value = assignment.split('=')[1]
+      if (value && (value.includes('/') || value.includes('.'))) {
+        paths.push(value)
       }
     }
 
