@@ -3,9 +3,10 @@
  * Track file changes for rollback capability
  */
 
-import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync } from 'fs'
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'fs'
 import { join, dirname, basename } from 'path'
 import { homedir } from 'os'
+import type { UndoPolicy } from '../types.js'
 
 export interface UndoEntry {
   id: string
@@ -23,27 +24,93 @@ export interface UndoResult {
   entry?: UndoEntry
 }
 
-const UNDO_DIR = join(homedir(), '.bashbros', 'undo')
-const MAX_STACK_SIZE = 100
-const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB max for backup
+export interface UndoConfig {
+  maxStackSize: number
+  maxFileSize: number
+  ttlMinutes: number
+  backupPath: string
+  enabled: boolean
+}
+
+const DEFAULT_CONFIG: UndoConfig = {
+  maxStackSize: 100,
+  maxFileSize: 10 * 1024 * 1024,  // 10MB
+  ttlMinutes: 60,
+  backupPath: join(homedir(), '.bashbros', 'undo'),
+  enabled: true
+}
 
 export class UndoStack {
   private stack: UndoEntry[] = []
   private sessionId: string
+  private config: UndoConfig
+  private undoDir: string
 
-  constructor() {
+  constructor(policy?: Partial<UndoPolicy>) {
+    this.config = { ...DEFAULT_CONFIG }
+
+    if (policy) {
+      if (typeof policy.maxStackSize === 'number') this.config.maxStackSize = policy.maxStackSize
+      if (typeof policy.maxFileSize === 'number') this.config.maxFileSize = policy.maxFileSize
+      if (typeof policy.ttlMinutes === 'number') this.config.ttlMinutes = policy.ttlMinutes
+      if (typeof policy.backupPath === 'string') {
+        this.config.backupPath = policy.backupPath.replace('~', homedir())
+      }
+      if (typeof policy.enabled === 'boolean') this.config.enabled = policy.enabled
+    }
+
+    this.undoDir = this.config.backupPath
     this.sessionId = Date.now().toString(36)
     this.ensureUndoDir()
+
+    // Clean up old backups on init
+    this.cleanupOldBackups()
   }
 
   private ensureUndoDir(): void {
-    if (!existsSync(UNDO_DIR)) {
-      mkdirSync(UNDO_DIR, { recursive: true, mode: 0o700 })
+    if (!existsSync(this.undoDir)) {
+      mkdirSync(this.undoDir, { recursive: true, mode: 0o700 })
     }
+  }
+
+  /**
+   * Clean up backups older than TTL
+   */
+  cleanupOldBackups(): number {
+    if (!this.config.enabled || this.config.ttlMinutes <= 0) return 0
+
+    const cutoff = Date.now() - (this.config.ttlMinutes * 60 * 1000)
+    let cleaned = 0
+
+    try {
+      const files = readdirSync(this.undoDir)
+
+      for (const file of files) {
+        if (!file.endsWith('.backup')) continue
+
+        const filePath = join(this.undoDir, file)
+        try {
+          const stats = statSync(filePath)
+          if (stats.mtimeMs < cutoff) {
+            unlinkSync(filePath)
+            cleaned++
+          }
+        } catch { /* ignore individual file errors */ }
+      }
+    } catch { /* ignore dir errors */ }
+
+    return cleaned
   }
 
   private generateId(): string {
     return `${this.sessionId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+  }
+
+  /**
+   * Check if undo is enabled
+   */
+  isEnabled(): boolean {
+    return this.config.enabled
   }
 
   /**
@@ -66,13 +133,13 @@ export class UndoStack {
    * Record a file modification (backs up original)
    */
   recordModify(path: string, command?: string): UndoEntry | null {
-    if (!existsSync(path)) {
+    if (!this.config.enabled || !existsSync(path)) {
       return null
     }
 
     // Check file size
-    const stats = require('fs').statSync(path)
-    if (stats.size > MAX_FILE_SIZE) {
+    const stats = statSync(path)
+    if (stats.size > this.config.maxFileSize) {
       // Too large, just record without backup
       const entry: UndoEntry = {
         id: this.generateId(),
@@ -87,7 +154,7 @@ export class UndoStack {
 
     // Create backup
     const id = this.generateId()
-    const backupPath = join(UNDO_DIR, `${id}.backup`)
+    const backupPath = join(this.undoDir, `${id}.backup`)
 
     try {
       copyFileSync(path, backupPath)
@@ -112,12 +179,12 @@ export class UndoStack {
    * Record a file deletion (backs up content)
    */
   recordDelete(path: string, command?: string): UndoEntry | null {
-    if (!existsSync(path)) {
+    if (!this.config.enabled || !existsSync(path)) {
       return null
     }
 
-    const stats = require('fs').statSync(path)
-    if (stats.size > MAX_FILE_SIZE) {
+    const stats = statSync(path)
+    if (stats.size > this.config.maxFileSize) {
       // Too large, just record without backup
       const entry: UndoEntry = {
         id: this.generateId(),
@@ -132,7 +199,7 @@ export class UndoStack {
 
     // Create backup
     const id = this.generateId()
-    const backupPath = join(UNDO_DIR, `${id}.backup`)
+    const backupPath = join(this.undoDir, `${id}.backup`)
 
     try {
       copyFileSync(path, backupPath)
@@ -323,7 +390,7 @@ export class UndoStack {
     this.stack.push(entry)
 
     // Limit stack size
-    if (this.stack.length > MAX_STACK_SIZE) {
+    if (this.stack.length > this.config.maxStackSize) {
       const removed = this.stack.shift()
       // Clean up backup
       if (removed?.backupPath && existsSync(removed.backupPath)) {

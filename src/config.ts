@@ -2,7 +2,16 @@ import { readFileSync, existsSync, statSync } from 'fs'
 import { parse } from 'yaml'
 import { join } from 'path'
 import { homedir } from 'os'
-import type { BashBrosConfig, SecurityProfile } from './types.js'
+import type {
+  BashBrosConfig,
+  SecurityProfile,
+  RiskScoringPolicy,
+  LoopDetectionPolicy,
+  AnomalyDetectionPolicy,
+  OutputScanningPolicy,
+  UndoPolicy,
+  RiskPattern
+} from './types.js'
 
 const CONFIG_FILENAME = '.bashbros.yml'
 
@@ -160,7 +169,98 @@ function validateConfig(parsed: unknown): Partial<BashBrosConfig> {
     }
   }
 
+  // Validate risk scoring
+  if (config.riskScoring && typeof config.riskScoring === 'object') {
+    const rs = config.riskScoring as Record<string, unknown>
+    validated.riskScoring = {
+      enabled: typeof rs.enabled === 'boolean' ? rs.enabled : true,
+      blockThreshold: validateNumber(rs.blockThreshold, { min: 1, max: 10 }),
+      warnThreshold: validateNumber(rs.warnThreshold, { min: 1, max: 10 }),
+      customPatterns: validateRiskPatterns(rs.customPatterns)
+    }
+  }
+
+  // Validate loop detection
+  if (config.loopDetection && typeof config.loopDetection === 'object') {
+    const ld = config.loopDetection as Record<string, unknown>
+    validated.loopDetection = {
+      enabled: typeof ld.enabled === 'boolean' ? ld.enabled : true,
+      maxRepeats: validateNumber(ld.maxRepeats, { min: 1, max: 100 }),
+      maxTurns: validateNumber(ld.maxTurns, { min: 10, max: 10000 }),
+      similarityThreshold: validateNumber(ld.similarityThreshold, { min: 0, max: 1 }) / 1, // Keep as float
+      cooldownMs: validateNumber(ld.cooldownMs, { min: 0, max: 60000 }),
+      windowSize: validateNumber(ld.windowSize, { min: 5, max: 100 }),
+      action: ld.action === 'block' ? 'block' : 'warn'
+    }
+  }
+
+  // Validate anomaly detection
+  if (config.anomalyDetection && typeof config.anomalyDetection === 'object') {
+    const ad = config.anomalyDetection as Record<string, unknown>
+    validated.anomalyDetection = {
+      enabled: typeof ad.enabled === 'boolean' ? ad.enabled : true,
+      workingHours: validateWorkingHours(ad.workingHours),
+      typicalCommandsPerMinute: validateNumber(ad.typicalCommandsPerMinute, { min: 1, max: 1000 }),
+      learningCommands: validateNumber(ad.learningCommands, { min: 10, max: 500 }),
+      suspiciousPatterns: validateStringArray(ad.suspiciousPatterns, 50),
+      action: ad.action === 'block' ? 'block' : 'warn'
+    }
+  }
+
+  // Validate output scanning
+  if (config.outputScanning && typeof config.outputScanning === 'object') {
+    const os = config.outputScanning as Record<string, unknown>
+    validated.outputScanning = {
+      enabled: typeof os.enabled === 'boolean' ? os.enabled : true,
+      scanForSecrets: typeof os.scanForSecrets === 'boolean' ? os.scanForSecrets : true,
+      scanForErrors: typeof os.scanForErrors === 'boolean' ? os.scanForErrors : true,
+      maxOutputLength: validateNumber(os.maxOutputLength, { min: 1000, max: 10000000 }),
+      redactPatterns: validateStringArray(os.redactPatterns, 50)
+    }
+  }
+
+  // Validate undo
+  if (config.undo && typeof config.undo === 'object') {
+    const undo = config.undo as Record<string, unknown>
+    validated.undo = {
+      enabled: typeof undo.enabled === 'boolean' ? undo.enabled : true,
+      maxStackSize: validateNumber(undo.maxStackSize, { min: 10, max: 1000 }),
+      maxFileSize: validateNumber(undo.maxFileSize, { min: 1024, max: 100 * 1024 * 1024 }),
+      ttlMinutes: validateNumber(undo.ttlMinutes, { min: 5, max: 1440 }),
+      backupPath: typeof undo.backupPath === 'string' ? undo.backupPath.slice(0, 500) : '~/.bashbros/undo'
+    }
+  }
+
   return validated
+}
+
+function validateRiskPatterns(value: unknown): RiskPattern[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .filter((item): item is Record<string, unknown> =>
+      item && typeof item === 'object' &&
+      typeof item.pattern === 'string' &&
+      typeof item.score === 'number' &&
+      typeof item.factor === 'string'
+    )
+    .slice(0, 50)
+    .map(item => ({
+      pattern: String(item.pattern).slice(0, 500),
+      score: Math.max(1, Math.min(10, Math.floor(Number(item.score)))),
+      factor: String(item.factor).slice(0, 200)
+    }))
+}
+
+function validateWorkingHours(value: unknown): [number, number] {
+  if (!Array.isArray(value) || value.length !== 2) {
+    return [6, 22]
+  }
+
+  const start = Math.max(0, Math.min(23, Math.floor(Number(value[0]) || 0)))
+  const end = Math.max(0, Math.min(24, Math.floor(Number(value[1]) || 24)))
+
+  return [start, end]
 }
 
 function validateStringArray(value: unknown, maxItems: number): string[] {
@@ -254,7 +354,87 @@ export function getDefaultConfig(): BashBrosConfig {
       enabled: true,
       maxPerMinute: 100,
       maxPerHour: 1000
-    }
+    },
+    riskScoring: getDefaultRiskScoring('balanced'),
+    loopDetection: getDefaultLoopDetection('balanced'),
+    anomalyDetection: getDefaultAnomalyDetection('balanced'),
+    outputScanning: getDefaultOutputScanning('balanced'),
+    undo: getDefaultUndo()
+  }
+}
+
+function getDefaultRiskScoring(profile: SecurityProfile): RiskScoringPolicy {
+  const thresholds: Record<string, { block: number; warn: number }> = {
+    strict: { block: 6, warn: 3 },
+    balanced: { block: 9, warn: 6 },
+    permissive: { block: 10, warn: 8 }
+  }
+  const t = thresholds[profile] || thresholds.balanced
+
+  return {
+    enabled: true,
+    blockThreshold: t.block,
+    warnThreshold: t.warn,
+    customPatterns: []
+  }
+}
+
+function getDefaultLoopDetection(profile: SecurityProfile): LoopDetectionPolicy {
+  const settings: Record<string, { maxRepeats: number; maxTurns: number; action: 'warn' | 'block' }> = {
+    strict: { maxRepeats: 2, maxTurns: 50, action: 'block' },
+    balanced: { maxRepeats: 3, maxTurns: 100, action: 'warn' },
+    permissive: { maxRepeats: 5, maxTurns: 200, action: 'warn' }
+  }
+  const s = settings[profile] || settings.balanced
+
+  return {
+    enabled: true,
+    maxRepeats: s.maxRepeats,
+    maxTurns: s.maxTurns,
+    similarityThreshold: 0.85,
+    cooldownMs: 1000,
+    windowSize: 20,
+    action: s.action
+  }
+}
+
+function getDefaultAnomalyDetection(profile: SecurityProfile): AnomalyDetectionPolicy {
+  return {
+    enabled: profile !== 'permissive',
+    workingHours: [6, 22],
+    typicalCommandsPerMinute: 30,
+    learningCommands: 50,
+    suspiciousPatterns: [],
+    action: profile === 'strict' ? 'block' : 'warn'
+  }
+}
+
+function getDefaultOutputScanning(profile: SecurityProfile): OutputScanningPolicy {
+  return {
+    enabled: true,
+    scanForSecrets: true,
+    scanForErrors: true,
+    maxOutputLength: 100000,
+    redactPatterns: [
+      'password\\s*[=:]\\s*\\S+',
+      'api[_-]?key\\s*[=:]\\s*\\S+',
+      'secret\\s*[=:]\\s*\\S+',
+      'token\\s*[=:]\\s*\\S+',
+      'Bearer\\s+[A-Za-z0-9\\-._~+/]+=*',
+      'sk-[A-Za-z0-9]{20,}',
+      'ghp_[A-Za-z0-9]{36}',
+      'glpat-[A-Za-z0-9\\-]{20,}'
+    ]
+  }
+}
+
+function getDefaultUndo(): UndoPolicy {
+  return {
+    enabled: true,
+    maxStackSize: 100,
+    maxFileSize: 10 * 1024 * 1024,  // 10MB
+    ttlMinutes: 60,                  // 1 hour
+    backupPath: '~/.bashbros/undo'
   }
 }
 
@@ -326,7 +506,12 @@ function mergeWithDefaults(parsed: Partial<BashBrosConfig>): BashBrosConfig {
     paths: { ...defaults.paths, ...parsed.paths },
     secrets: { ...defaults.secrets, ...parsed.secrets },
     audit: { ...defaults.audit, ...parsed.audit },
-    rateLimit: { ...defaults.rateLimit, ...parsed.rateLimit }
+    rateLimit: { ...defaults.rateLimit, ...parsed.rateLimit },
+    riskScoring: { ...defaults.riskScoring, ...parsed.riskScoring },
+    loopDetection: { ...defaults.loopDetection, ...parsed.loopDetection },
+    anomalyDetection: { ...defaults.anomalyDetection, ...parsed.anomalyDetection },
+    outputScanning: { ...defaults.outputScanning, ...parsed.outputScanning },
+    undo: { ...defaults.undo, ...parsed.undo }
   }
 }
 

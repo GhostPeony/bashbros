@@ -31,6 +31,7 @@ export { CommandFilter } from './policy/command-filter.js'
 export { PathSandbox } from './policy/path-sandbox.js'
 export { SecretsGuard } from './policy/secrets-guard.js'
 export { RateLimiter } from './policy/rate-limiter.js'
+export { OutputScanner } from './policy/output-scanner.js'
 
 // Observability
 export { MetricsCollector } from './observability/metrics.js'
@@ -53,6 +54,12 @@ export type {
   SecretsPolicy,
   AuditPolicy,
   RateLimitPolicy,
+  RiskScoringPolicy,
+  RiskPattern,
+  LoopDetectionPolicy,
+  AnomalyDetectionPolicy,
+  OutputScanningPolicy,
+  UndoPolicy,
   CommandResult,
   PolicyViolation,
   AuditEntry
@@ -72,4 +79,5 @@ export type { SessionMetrics, CommandMetric } from './observability/metrics.js'
 export type { CostEstimate, ModelPricing } from './observability/cost.js'
 export type { ReportOptions } from './observability/report.js'
 export type { ClaudeSettings } from './hooks/claude-code.js'
-export type { UndoEntry, UndoResult } from './safety/undo-stack.js'
+export type { UndoEntry, UndoResult, UndoConfig } from './safety/undo-stack.js'
+export type { ScanResult, Finding } from './policy/output-scanner.js'

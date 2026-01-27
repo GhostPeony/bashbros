@@ -6,6 +6,12 @@ export interface BashBrosConfig {
   secrets: SecretsPolicy
   audit: AuditPolicy
   rateLimit: RateLimitPolicy
+  // New security controls
+  riskScoring: RiskScoringPolicy
+  loopDetection: LoopDetectionPolicy
+  anomalyDetection: AnomalyDetectionPolicy
+  outputScanning: OutputScanningPolicy
+  undo: UndoPolicy
 }
 
 export type AgentType =
@@ -44,6 +50,54 @@ export interface RateLimitPolicy {
   enabled: boolean
   maxPerMinute: number
   maxPerHour: number
+}
+
+export interface RiskScoringPolicy {
+  enabled: boolean
+  blockThreshold: number       // Block commands at or above this score (1-10)
+  warnThreshold: number        // Warn on commands at or above this score
+  customPatterns: RiskPattern[]
+}
+
+export interface RiskPattern {
+  pattern: string              // Regex pattern as string
+  score: number                // 1-10
+  factor: string               // Description
+}
+
+export interface LoopDetectionPolicy {
+  enabled: boolean
+  maxRepeats: number           // Same command N times triggers alert
+  maxTurns: number             // Total commands before hard stop
+  similarityThreshold: number  // 0-1, how similar commands must be
+  cooldownMs: number           // Min time between identical commands
+  windowSize: number           // Commands to look back
+  action: 'warn' | 'block'     // What to do on detection
+}
+
+export interface AnomalyDetectionPolicy {
+  enabled: boolean
+  workingHours: [number, number]  // [startHour, endHour] 24h format
+  typicalCommandsPerMinute: number
+  learningCommands: number        // How many commands before leaving learning mode
+  suspiciousPatterns: string[]    // Additional patterns to flag
+  action: 'warn' | 'block'
+}
+
+export interface OutputScanningPolicy {
+  enabled: boolean
+  scanForSecrets: boolean         // Check output for leaked secrets
+  scanForErrors: boolean          // Detect error patterns
+  maxOutputLength: number         // Truncate output above this
+  redactPatterns: string[]        // Patterns to redact from logs
+}
+
+export interface UndoPolicy {
+  enabled: boolean
+  maxStackSize: number            // Max operations to track
+  maxFileSize: number             // Max file size to backup (bytes)
+  ttlMinutes: number              // Auto-cleanup backups older than this
+  backupPath: string              // Where to store backups
 }
 
 export interface CommandResult {
