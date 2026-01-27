@@ -33,7 +33,7 @@ bashbros hook install   # Auto-install hooks
 
 ## Features
 
-### Security (8 modules)
+### Security (9 modules)
 - **Command filter** - Allow/block by pattern
 - **Path sandbox** - Restrict filesystem access
 - **Secrets guard** - Block .env, keys, credentials
@@ -41,6 +41,7 @@ bashbros hook install   # Auto-install hooks
 - **Risk scorer** - Score commands 1-10 by danger level
 - **Loop detector** - Detect stuck/repetitive agent behavior
 - **Anomaly detector** - Flag unusual patterns
+- **Output scanner** - Detect leaked secrets in command output
 - **Undo stack** - Rollback file changes
 
 ### Observability (3 modules)
@@ -197,15 +198,60 @@ rateLimit:
   enabled: true
   maxPerMinute: 100
   maxPerHour: 1000
+
+# Risk scoring thresholds (1-10)
+riskScoring:
+  enabled: true
+  blockThreshold: 9    # Block at or above (strict: 6, balanced: 9, permissive: 10)
+  warnThreshold: 6     # Warn at or above (strict: 3, balanced: 6, permissive: 8)
+  customPatterns:
+    - pattern: "my-custom-danger-cmd"
+      score: 8
+      factor: "Custom dangerous pattern"
+
+# Loop detection
+loopDetection:
+  enabled: true
+  maxRepeats: 3        # Same command N times triggers alert
+  maxTurns: 100        # Hard stop after N total commands
+  similarityThreshold: 0.85
+  cooldownMs: 1000
+  windowSize: 20
+  action: warn         # 'warn' or 'block'
+
+# Anomaly detection
+anomalyDetection:
+  enabled: true
+  workingHours: [6, 22]           # 6am-10pm
+  typicalCommandsPerMinute: 30
+  learningCommands: 50            # Commands before leaving learning mode
+  suspiciousPatterns: []
+  action: warn
+
+# Output scanning for leaked secrets
+outputScanning:
+  enabled: true
+  scanForSecrets: true
+  scanForErrors: true
+  maxOutputLength: 100000
+  redactPatterns: []              # Additional patterns to redact
+
+# Undo/rollback
+undo:
+  enabled: true
+  maxStackSize: 100
+  maxFileSize: 10485760           # 10MB
+  ttlMinutes: 60                  # Auto-cleanup after 60 min
+  backupPath: ~/.bashbros/undo
 ```
 
 ## Security Profiles
 
-| Profile | Behavior |
-|---------|----------|
-| `balanced` | Block dangerous, allow common dev tools |
-| `strict` | Allowlist only, explicit approval |
-| `permissive` | Log all, block critical threats only |
+| Profile | Risk Block | Risk Warn | Loop Max | Anomaly | Behavior |
+|---------|------------|-----------|----------|---------|----------|
+| `strict` | 6 | 3 | 2 repeats, block | enabled | Allowlist only, explicit approval |
+| `balanced` | 9 | 6 | 3 repeats, warn | enabled | Block dangerous, allow common dev tools |
+| `permissive` | 10 | 8 | 5 repeats, warn | disabled | Log all, block critical threats only |
 
 ## Risk Levels
 
@@ -235,6 +281,7 @@ import {
   RiskScorer,
   LoopDetector,
   AnomalyDetector,
+  OutputScanner,
   MetricsCollector,
   CostEstimator,
   ReportGenerator,
@@ -269,9 +316,15 @@ cost.recordToolCall('command', 'output')
 console.log(cost.getEstimate())  // { estimatedCost: 0.05, ... }
 
 // Undo stack
-const undo = new UndoStack()
+const undo = new UndoStack({ maxStackSize: 50, ttlMinutes: 30 })
 undo.recordModify('/path/to/file')
 undo.undo()  // Restores from backup
+
+// Output scanning
+const scanner = new OutputScanner({ enabled: true, scanForSecrets: true })
+const result = scanner.scan('API_KEY=sk-secret123')
+console.log(result.hasSecrets)    // true
+console.log(result.redactedOutput) // 'API_KEY=[REDACTED API Key]'
 
 // Claude Code hooks
 ClaudeCodeHooks.install()
