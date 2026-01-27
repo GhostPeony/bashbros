@@ -264,4 +264,150 @@ program
     }
   })
 
+program
+  .command('script <description>')
+  .description('Generate a shell script from description')
+  .option('-o, --output <file>', 'Save script to file')
+  .action(async (description, options) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    console.log(chalk.dim('🤝 Bash Bro is generating script...\n'))
+    const script = await bro.aiGenerateScript(description)
+
+    if (script) {
+      console.log(chalk.cyan(script))
+
+      if (options.output) {
+        const { writeFileSync } = await import('fs')
+        writeFileSync(options.output, script, { mode: 0o755 })
+        console.log(chalk.green(`\n✓ Saved to ${options.output}`))
+      }
+    } else {
+      console.log(chalk.yellow('Could not generate script.'))
+    }
+  })
+
+program
+  .command('safety <command>')
+  .description('Analyze a command for security risks')
+  .action(async (command) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    console.log(chalk.dim('🤝 Bash Bro is analyzing...\n'))
+    const analysis = await bro.aiAnalyzeSafety(command)
+
+    const riskColors = {
+      low: chalk.green,
+      medium: chalk.yellow,
+      high: chalk.red,
+      critical: chalk.bgRed.white
+    }
+
+    const icon = analysis.safe ? '✓' : '⚠'
+    const color = riskColors[analysis.risk]
+
+    console.log(`${icon} Risk Level: ${color(analysis.risk.toUpperCase())}`)
+    console.log()
+    console.log(chalk.bold('Explanation:'))
+    console.log(`  ${analysis.explanation}`)
+
+    if (analysis.suggestions.length > 0) {
+      console.log()
+      console.log(chalk.bold('Suggestions:'))
+      for (const suggestion of analysis.suggestions) {
+        console.log(`  • ${suggestion}`)
+      }
+    }
+  })
+
+program
+  .command('help-ai <topic>')
+  .alias('h')
+  .description('Get AI help for a command or topic')
+  .action(async (topic) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    console.log(chalk.dim('🤝 Bash Bro is looking that up...\n'))
+    const help = await bro.aiHelp(topic)
+    console.log(help)
+  })
+
+program
+  .command('do <description>')
+  .description('Convert natural language to a command')
+  .option('-x, --execute', 'Execute the command after showing it')
+  .action(async (description, options) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    console.log(chalk.dim('🤝 Bash Bro is translating...\n'))
+    const command = await bro.aiToCommand(description)
+
+    if (command) {
+      console.log(chalk.bold('Command:'))
+      console.log(chalk.cyan(`  $ ${command}`))
+
+      if (options.execute) {
+        console.log()
+        console.log(chalk.dim('Executing...'))
+        const output = await bro.execute(command)
+        console.log(output)
+      }
+    } else {
+      console.log(chalk.yellow('Could not translate to a command.'))
+    }
+  })
+
+program
+  .command('models')
+  .description('List available Ollama models')
+  .action(async () => {
+    console.log(chalk.cyan(logo))
+
+    const { OllamaClient } = await import('./bro/ollama.js')
+    const ollama = new OllamaClient()
+
+    const available = await ollama.isAvailable()
+    if (!available) {
+      console.log(chalk.yellow('Ollama not running. Start Ollama to see available models.'))
+      return
+    }
+
+    const models = await ollama.listModels()
+
+    if (models.length === 0) {
+      console.log(chalk.dim('No models installed. Run: ollama pull qwen2.5-coder:7b'))
+      return
+    }
+
+    console.log(chalk.bold('🤝 Available Models:\n'))
+    for (const model of models) {
+      const current = model === ollama.getModel() ? chalk.green(' (current)') : ''
+      console.log(`  • ${model}${current}`)
+    }
+  })
+
 program.parse()

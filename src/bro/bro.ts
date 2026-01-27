@@ -302,6 +302,72 @@ export class BashBro extends EventEmitter {
     }
   }
 
+  /**
+   * Generate a shell script from natural language description
+   */
+  async aiGenerateScript(description: string): Promise<string | null> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return null
+    }
+
+    const shell = this.profile?.shell || 'bash'
+    return this.ollama.generateScript(description, shell)
+  }
+
+  /**
+   * Analyze command for security risks using AI
+   */
+  async aiAnalyzeSafety(command: string): Promise<{
+    safe: boolean
+    risk: 'low' | 'medium' | 'high' | 'critical'
+    explanation: string
+    suggestions: string[]
+  }> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return {
+        safe: true,
+        risk: 'low',
+        explanation: 'AI analysis not available.',
+        suggestions: []
+      }
+    }
+
+    return this.ollama.analyzeCommandSafety(command)
+  }
+
+  /**
+   * Summarize a terminal session
+   */
+  async aiSummarize(commands: { command: string; output?: string; error?: string }[]): Promise<string> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return 'AI not available for summaries.'
+    }
+
+    return this.ollama.summarizeSession(commands)
+  }
+
+  /**
+   * Get AI help for a topic or command
+   */
+  async aiHelp(topic: string): Promise<string> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return 'AI not available for help.'
+    }
+
+    return this.ollama.getHelp(topic)
+  }
+
+  /**
+   * Convert natural language to command
+   */
+  async aiToCommand(description: string): Promise<string | null> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return null
+    }
+
+    return this.ollama.naturalToCommand(description)
+  }
+
   // Format a nice status message
   status(): string {
     const lines: string[] = [
