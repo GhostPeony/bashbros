@@ -195,4 +195,73 @@ program
     }
   })
 
+// ─────────────────────────────────────────────────────────────
+// AI Commands (requires Ollama)
+// ─────────────────────────────────────────────────────────────
+
+program
+  .command('explain <command>')
+  .description('Ask Bash Bro to explain a command')
+  .action(async (command) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    console.log(chalk.dim('🤝 Bash Bro is thinking...\n'))
+    const explanation = await bro.aiExplain(command)
+    console.log(explanation)
+  })
+
+program
+  .command('fix <command>')
+  .description('Ask Bash Bro to fix a failed command')
+  .option('-e, --error <message>', 'Error message from the failed command')
+  .action(async (command, options) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    const error = options.error || 'Command failed'
+    console.log(chalk.dim('🤝 Bash Bro is analyzing...\n'))
+
+    const fixed = await bro.aiFix(command, error)
+
+    if (fixed) {
+      console.log(chalk.green('Suggested fix:'))
+      console.log(chalk.cyan(`  ${fixed}`))
+    } else {
+      console.log(chalk.yellow('Could not suggest a fix.'))
+    }
+  })
+
+program
+  .command('ai <prompt>')
+  .description('Ask Bash Bro anything')
+  .action(async (prompt) => {
+    const bro = new BashBro()
+    await bro.initialize()
+
+    if (!bro.isOllamaAvailable()) {
+      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
+      return
+    }
+
+    console.log(chalk.dim('🤝 Bash Bro is thinking...\n'))
+    const suggestion = await bro.aiSuggest(prompt)
+
+    if (suggestion) {
+      console.log(chalk.cyan(suggestion))
+    } else {
+      console.log(chalk.dim('No suggestion available.'))
+    }
+  })
+
 program.parse()

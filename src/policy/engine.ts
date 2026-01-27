@@ -3,6 +3,7 @@ import { CommandFilter } from './command-filter.js'
 import { PathSandbox } from './path-sandbox.js'
 import { SecretsGuard } from './secrets-guard.js'
 import { RateLimiter } from './rate-limiter.js'
+import { isAllowedForSession } from '../session.js'
 
 export class PolicyEngine {
   private commandFilter: CommandFilter
@@ -25,6 +26,12 @@ export class PolicyEngine {
     if (rateViolation) {
       violations.push(rateViolation)
       return violations // Early exit on rate limit
+    }
+
+    // Check session allowlist first (temporary permissions)
+    if (isAllowedForSession(command)) {
+      this.rateLimiter.record()
+      return [] // Allowed for this session
     }
 
     // Check command against allow/block lists

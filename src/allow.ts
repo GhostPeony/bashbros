@@ -2,16 +2,17 @@ import chalk from 'chalk'
 import { readFileSync, writeFileSync } from 'fs'
 import { parse, stringify } from 'yaml'
 import { findConfig } from './config.js'
+import { allowForSession, getSessionAllowlist, clearSessionAllowlist } from './session.js'
 
 export async function handleAllow(
   command: string,
   options: { once?: boolean; persist?: boolean }
 ): Promise<void> {
   if (options.once) {
-    // Add to session allowlist (stored in memory/temp file)
+    // Add to session allowlist
+    allowForSession(command)
     console.log(chalk.green('✓'), `Allowed for this session: ${command}`)
     console.log(chalk.dim('  This will reset when BashBros restarts.'))
-    // TODO: Implement session-based allowlist via IPC or temp file
     return
   }
 

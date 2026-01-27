@@ -6,12 +6,21 @@ export { PolicyEngine } from './policy/engine.js'
 export { loadConfig, type BashBrosConfig } from './config.js'
 export { AuditLogger } from './audit.js'
 
+// Session management
+export {
+  allowForSession,
+  isAllowedForSession,
+  getSessionAllowlist,
+  clearSessionAllowlist
+} from './session.js'
+
 // Bash Bro - Your trained sidekick
 export { BashBro } from './bro/bro.js'
 export { SystemProfiler, type SystemProfile } from './bro/profiler.js'
 export { TaskRouter, type RoutingResult } from './bro/router.js'
 export { CommandSuggester, type Suggestion } from './bro/suggester.js'
 export { BackgroundWorker, type BackgroundTask } from './bro/worker.js'
+export { OllamaClient } from './bro/ollama.js'
 
 // Re-export types
 export type {

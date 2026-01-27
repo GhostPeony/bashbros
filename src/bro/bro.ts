@@ -5,13 +5,15 @@ import { SystemProfiler, SystemProfile } from './profiler.js'
 import { TaskRouter, RoutingResult } from './router.js'
 import { CommandSuggester, Suggestion, SuggestionContext } from './suggester.js'
 import { BackgroundWorker, BackgroundTask } from './worker.js'
+import { OllamaClient } from './ollama.js'
 
 export interface BroConfig {
-  modelEndpoint?: string  // Ollama or other local model
+  modelEndpoint?: string  // Ollama endpoint (default: http://localhost:11434)
   modelName?: string      // e.g., 'qwen2.5-coder:7b'
   enableSuggestions?: boolean
   enableRouting?: boolean
   enableBackground?: boolean
+  enableOllama?: boolean  // Use Ollama for AI features
 }
 
 // Allowlist of commands that can be executed directly
@@ -103,8 +105,10 @@ export class BashBro extends EventEmitter {
   private router: TaskRouter
   private suggester: CommandSuggester
   private worker: BackgroundWorker
+  private ollama: OllamaClient | null = null
   private profile: SystemProfile | null = null
   private config: BroConfig
+  private ollamaAvailable: boolean = false
 
   constructor(config: BroConfig = {}) {
     super()
@@ -113,6 +117,7 @@ export class BashBro extends EventEmitter {
       enableSuggestions: true,
       enableRouting: true,
       enableBackground: true,
+      enableOllama: true,
       ...config
     }
 
@@ -120,6 +125,14 @@ export class BashBro extends EventEmitter {
     this.router = new TaskRouter()
     this.suggester = new CommandSuggester()
     this.worker = new BackgroundWorker()
+
+    // Initialize Ollama client if enabled
+    if (this.config.enableOllama) {
+      this.ollama = new OllamaClient({
+        host: this.config.modelEndpoint,
+        model: this.config.modelName
+      })
+    }
 
     // Forward worker events
     this.worker.on('complete', (data) => this.emit('task:complete', data))
@@ -139,6 +152,14 @@ export class BashBro extends EventEmitter {
 
     this.router.updateProfile(this.profile)
     this.suggester.updateProfile(this.profile)
+
+    // Check Ollama availability
+    if (this.ollama) {
+      this.ollamaAvailable = await this.ollama.isAvailable()
+      if (this.ollamaAvailable) {
+        console.log('🤝 Bash Bro: Ollama connected')
+      }
+    }
 
     this.emit('ready', this.profile)
   }
@@ -232,6 +253,55 @@ export class BashBro extends EventEmitter {
     return this.profile
   }
 
+  /**
+   * Check if Ollama is available for AI features
+   */
+  isOllamaAvailable(): boolean {
+    return this.ollamaAvailable
+  }
+
+  /**
+   * Ask Bash Bro (via Ollama) to suggest the next command
+   */
+  async aiSuggest(context: string): Promise<string | null> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return null
+    }
+
+    return this.ollama.suggestCommand(context)
+  }
+
+  /**
+   * Ask Bash Bro to explain a command
+   */
+  async aiExplain(command: string): Promise<string> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return 'Ollama not available for explanations.'
+    }
+
+    return this.ollama.explainCommand(command)
+  }
+
+  /**
+   * Ask Bash Bro to fix a failed command
+   */
+  async aiFix(command: string, error: string): Promise<string | null> {
+    if (!this.ollama || !this.ollamaAvailable) {
+      return null
+    }
+
+    return this.ollama.fixCommand(command, error)
+  }
+
+  /**
+   * Set the Ollama model to use
+   */
+  setModel(model: string): void {
+    if (this.ollama) {
+      this.ollama.setModel(model)
+    }
+  }
+
   // Format a nice status message
   status(): string {
     const lines: string[] = [
@@ -260,6 +330,14 @@ export class BashBro extends EventEmitter {
       if (this.profile.projectType) {
         lines.push(`Project: ${this.profile.projectType}`)
       }
+    }
+
+    // Ollama connection status
+    lines.push('')
+    if (this.ollamaAvailable) {
+      lines.push(`AI: Connected (${this.ollama?.getModel() || 'default'})`)
+    } else {
+      lines.push('AI: Not connected (run Ollama for AI features)')
     }
 
     lines.push('')
