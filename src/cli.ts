@@ -5,6 +5,19 @@ import { runDoctor } from './doctor.js'
 import { startWatch } from './watch.js'
 import { handleAllow } from './allow.js'
 import { BashBro } from './bro/bro.js'
+import { ClaudeCodeHooks, gateCommand } from './hooks/claude-code.js'
+import { RiskScorer } from './policy/risk-scorer.js'
+import { MetricsCollector } from './observability/metrics.js'
+import { CostEstimator } from './observability/cost.js'
+import { ReportGenerator } from './observability/report.js'
+import { UndoStack } from './safety/undo-stack.js'
+import { LoopDetector } from './policy/loop-detector.js'
+
+// Shared state for session tracking
+let metricsCollector: MetricsCollector | null = null
+let costEstimator: CostEstimator | null = null
+let loopDetector: LoopDetector | null = null
+let undoStack: UndoStack | null = null
 
 const logo = `
   ╱BashBros ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -408,6 +421,245 @@ program
       const current = model === ollama.getModel() ? chalk.green(' (current)') : ''
       console.log(`  • ${model}${current}`)
     }
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Hook & Observability Commands
+// ─────────────────────────────────────────────────────────────
+
+const hookCmd = program
+  .command('hook')
+  .description('Manage Claude Code hook integration')
+
+hookCmd
+  .command('install')
+  .description('Install BashBros hooks into Claude Code')
+  .action(() => {
+    const result = ClaudeCodeHooks.install()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+hookCmd
+  .command('uninstall')
+  .description('Remove BashBros hooks from Claude Code')
+  .action(() => {
+    const result = ClaudeCodeHooks.uninstall()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+hookCmd
+  .command('status')
+  .description('Check Claude Code hook status')
+  .action(() => {
+    const status = ClaudeCodeHooks.getStatus()
+    console.log()
+    console.log(chalk.bold('Claude Code Integration Status'))
+    console.log()
+    console.log(`  Claude Code: ${status.claudeInstalled ? chalk.green('installed') : chalk.yellow('not found')}`)
+    console.log(`  BashBros hooks: ${status.hooksInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    if (status.hooks.length > 0) {
+      console.log(`  Active hooks: ${status.hooks.join(', ')}`)
+    }
+    console.log()
+  })
+
+program
+  .command('gate <command>')
+  .description('Check if a command should be allowed (used by hooks)')
+  .action(async (command) => {
+    const result = await gateCommand(command)
+
+    if (!result.allowed) {
+      console.error(`BLOCKED: ${result.reason}`)
+      process.exit(2)  // Non-zero to block in Claude Code
+    }
+
+    // Silently allow
+    process.exit(0)
+  })
+
+program
+  .command('record <command>')
+  .description('Record a command execution (used by hooks)')
+  .option('-o, --output <output>', 'Command output')
+  .option('-e, --exit-code <code>', 'Exit code', '0')
+  .action(async (command, options) => {
+    // Initialize collectors if needed
+    if (!metricsCollector) metricsCollector = new MetricsCollector()
+    if (!costEstimator) costEstimator = new CostEstimator()
+    if (!loopDetector) loopDetector = new LoopDetector()
+    if (!undoStack) undoStack = new UndoStack()
+
+    const scorer = new RiskScorer()
+    const risk = scorer.score(command)
+
+    // Record metrics
+    metricsCollector.record({
+      command,
+      timestamp: new Date(),
+      duration: 0,  // Not available in hook
+      allowed: true,
+      riskScore: risk,
+      violations: [],
+      exitCode: parseInt(options.exitCode) || 0
+    })
+
+    // Record for cost estimation
+    costEstimator.recordToolCall(command, options.output || '')
+
+    // Check for loops
+    const loopAlert = loopDetector.check(command)
+    if (loopAlert) {
+      console.error(chalk.yellow(`⚠ Loop detected: ${loopAlert.message}`))
+    }
+
+    // Track file changes for undo
+    const paths = command.match(/(?:^|\s)(\.\/|\.\.\/|\/|~\/)[^\s]+/g) || []
+    const cleanPaths = paths.map((p: string) => p.trim())
+    if (cleanPaths.length > 0) {
+      undoStack.recordFromCommand(command, cleanPaths)
+    }
+  })
+
+program
+  .command('session-end')
+  .description('Generate session report (used by hooks)')
+  .option('-f, --format <format>', 'Output format (text, markdown, json)', 'text')
+  .action((options) => {
+    if (!metricsCollector) {
+      console.log(chalk.dim('No session data to report.'))
+      return
+    }
+
+    const metrics = metricsCollector.getMetrics()
+    const cost = costEstimator?.getEstimate()
+    const report = ReportGenerator.generate(metrics, cost, { format: options.format })
+
+    console.log()
+    console.log(report)
+    console.log()
+  })
+
+program
+  .command('report')
+  .description('Generate a session report')
+  .option('-f, --format <format>', 'Output format (text, markdown, json)', 'text')
+  .option('--no-cost', 'Hide cost estimate')
+  .option('--no-risk', 'Hide risk distribution')
+  .action((options) => {
+    if (!metricsCollector) {
+      console.log(chalk.dim('No session data. Run some commands first.'))
+      return
+    }
+
+    const metrics = metricsCollector.getMetrics()
+    const cost = options.cost ? costEstimator?.getEstimate() : undefined
+    const report = ReportGenerator.generate(metrics, cost, {
+      format: options.format,
+      showCost: options.cost,
+      showRisk: options.risk
+    })
+
+    console.log()
+    console.log(report)
+    console.log()
+  })
+
+program
+  .command('risk <command>')
+  .description('Score a command for security risk')
+  .action((command) => {
+    const scorer = new RiskScorer()
+    const result = scorer.score(command)
+
+    const colors: Record<string, (s: string) => string> = {
+      safe: chalk.green,
+      caution: chalk.yellow,
+      dangerous: chalk.red,
+      critical: chalk.bgRed.white
+    }
+
+    const color = colors[result.level]
+
+    console.log()
+    console.log(`  Risk Score: ${color(`${result.score}/10`)} (${color(result.level.toUpperCase())})`)
+    console.log()
+    console.log(chalk.bold('  Factors:'))
+    for (const factor of result.factors) {
+      console.log(`    • ${factor}`)
+    }
+    console.log()
+  })
+
+const undoCmd = program
+  .command('undo')
+  .description('Undo file operations')
+
+undoCmd
+  .command('last')
+  .alias('pop')
+  .description('Undo the last file operation')
+  .action(() => {
+    if (!undoStack) {
+      console.log(chalk.dim('No operations to undo.'))
+      return
+    }
+
+    const result = undoStack.undo()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+    }
+  })
+
+undoCmd
+  .command('all')
+  .description('Undo all file operations in session')
+  .action(() => {
+    if (!undoStack || undoStack.size() === 0) {
+      console.log(chalk.dim('No operations to undo.'))
+      return
+    }
+
+    const results = undoStack.undoAll()
+    let success = 0, failed = 0
+
+    for (const result of results) {
+      if (result.success) {
+        console.log(chalk.green('✓'), result.message)
+        success++
+      } else {
+        console.log(chalk.red('✗'), result.message)
+        failed++
+      }
+    }
+
+    console.log()
+    console.log(`Undone: ${success} successful, ${failed} failed`)
+  })
+
+undoCmd
+  .command('list')
+  .description('Show undo stack')
+  .action(() => {
+    if (!undoStack) {
+      undoStack = new UndoStack()
+    }
+
+    console.log()
+    console.log(undoStack.formatStack())
+    console.log()
   })
 
 program.parse()
