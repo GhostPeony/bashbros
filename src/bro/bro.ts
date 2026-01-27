@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process'
 import { EventEmitter } from 'events'
 import type { BashBrosConfig } from '../types.js'
 import { SystemProfiler, SystemProfile } from './profiler.js'
@@ -11,6 +12,90 @@ export interface BroConfig {
   enableSuggestions?: boolean
   enableRouting?: boolean
   enableBackground?: boolean
+}
+
+// Allowlist of commands that can be executed directly
+const SAFE_COMMANDS = new Set([
+  'ls', 'dir', 'cat', 'head', 'tail', 'grep', 'find', 'wc',
+  'pwd', 'cd', 'mkdir', 'touch', 'cp', 'mv', 'rm',
+  'git', 'npm', 'npx', 'pnpm', 'yarn', 'node', 'python', 'python3',
+  'pip', 'pip3', 'pytest', 'cargo', 'go', 'rustc',
+  'docker', 'kubectl', 'echo', 'which', 'where', 'type',
+  'date', 'whoami', 'hostname', 'env', 'printenv'
+])
+
+/**
+ * Parse command into executable and arguments safely
+ */
+function parseCommandSafe(command: string): { cmd: string; args: string[] } | null {
+  const tokens: string[] = []
+  let current = ''
+  let inQuote: string | null = null
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]
+
+    if (inQuote) {
+      if (char === inQuote) {
+        inQuote = null
+      } else {
+        current += char
+      }
+    } else if (char === '"' || char === "'") {
+      inQuote = char
+    } else if (char === ' ' || char === '\t') {
+      if (current) {
+        tokens.push(current)
+        current = ''
+      }
+    } else {
+      current += char
+    }
+  }
+
+  if (current) {
+    tokens.push(current)
+  }
+
+  if (tokens.length === 0) {
+    return null
+  }
+
+  const cmd = tokens[0]
+
+  // SECURITY: Only allow whitelisted commands
+  if (!SAFE_COMMANDS.has(cmd)) {
+    return null
+  }
+
+  return {
+    cmd,
+    args: tokens.slice(1)
+  }
+}
+
+/**
+ * Validate command doesn't contain shell injection patterns
+ */
+function validateCommandSafety(command: string): { safe: boolean; reason?: string } {
+  const dangerousPatterns = [
+    /[;&|`]/, // Shell operators
+    /\$\(/, // Command substitution
+    /\$\{/, // Variable expansion
+    />\s*>/, // Append redirect
+    /[<>]\s*\//, // Redirect to/from absolute path
+    /\|\s*\w+/, // Pipe to command
+    /\\x[0-9a-f]/i, // Hex escapes
+    /\\[0-7]{3}/, // Octal escapes
+  ]
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(command)) {
+      return { safe: false, reason: `Contains dangerous pattern` }
+    }
+  }
+
+  return { safe: true }
 }
 
 export class BashBro extends EventEmitter {
@@ -93,16 +178,29 @@ export class BashBro extends EventEmitter {
     return this.suggester.suggest(context)
   }
 
+  /**
+   * SECURITY FIX: Safe command execution with validation
+   */
   async execute(command: string): Promise<string> {
-    // This would call the local model (Ollama/Qwen) to execute
-    // For now, just execute directly
-    const { execSync } = await import('child_process')
+    // Validate command safety
+    const safety = validateCommandSafety(command)
+    if (!safety.safe) {
+      return `Security: Command blocked - ${safety.reason}`
+    }
+
+    // Parse command safely
+    const parsed = parseCommandSafe(command)
+    if (!parsed) {
+      return `Security: Command not in allowlist. Only safe commands can be executed directly.`
+    }
 
     try {
-      const output = execSync(command, {
+      // SECURITY: Use execFileSync with array args, no shell
+      const output = execFileSync(parsed.cmd, parsed.args, {
         encoding: 'utf-8',
         timeout: 30000,
-        cwd: process.cwd()
+        cwd: process.cwd(),
+        windowsHide: true
       })
       return output
     } catch (error: any) {

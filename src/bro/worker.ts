@@ -11,12 +11,88 @@ export interface BackgroundTask {
   exitCode?: number
 }
 
+// Maximum tasks to keep in history
+const MAX_TASK_HISTORY = 100
+
+/**
+ * Safely parse a command string into executable parts.
+ * Prevents shell injection by NOT using shell: true
+ */
+function parseCommand(command: string): { cmd: string; args: string[] } {
+  // Handle quoted strings properly
+  const tokens: string[] = []
+  let current = ''
+  let inQuote: string | null = null
+
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i]
+
+    if (inQuote) {
+      if (char === inQuote) {
+        inQuote = null
+      } else {
+        current += char
+      }
+    } else if (char === '"' || char === "'") {
+      inQuote = char
+    } else if (char === ' ' || char === '\t') {
+      if (current) {
+        tokens.push(current)
+        current = ''
+      }
+    } else {
+      current += char
+    }
+  }
+
+  if (current) {
+    tokens.push(current)
+  }
+
+  return {
+    cmd: tokens[0] || '',
+    args: tokens.slice(1)
+  }
+}
+
+/**
+ * Validate command doesn't contain dangerous shell metacharacters
+ */
+function validateCommand(command: string): { valid: boolean; reason?: string } {
+  // Block shell metacharacters that could enable injection
+  const dangerousPatterns = [
+    /[;&|`$]/, // Shell operators and command substitution
+    /\$\(/, // Command substitution
+    />\s*>/, // Append redirect
+    />\s*\//, // Redirect to absolute path
+    /<\s*\//, // Input from absolute path
+    /\|\s*\w+/, // Pipe to command
+  ]
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(command)) {
+      return {
+        valid: false,
+        reason: `Command contains potentially dangerous pattern: ${pattern.source}`
+      }
+    }
+  }
+
+  return { valid: true }
+}
+
 export class BackgroundWorker extends EventEmitter {
   private tasks: Map<string, BackgroundTask> = new Map()
   private processes: Map<string, ChildProcess> = new Map()
   private taskIdCounter = 0
 
   spawn(command: string, cwd?: string): BackgroundTask {
+    // Validate command first
+    const validation = validateCommand(command)
+    if (!validation.valid) {
+      throw new Error(`Security: ${validation.reason}`)
+    }
+
     const id = `task_${++this.taskIdCounter}`
 
     const task: BackgroundTask = {
@@ -29,15 +105,22 @@ export class BackgroundWorker extends EventEmitter {
 
     this.tasks.set(id, task)
 
-    // Parse command and args
-    const parts = command.split(/\s+/)
-    const cmd = parts[0]
-    const args = parts.slice(1)
+    // Parse command safely
+    const { cmd, args } = parseCommand(command)
 
+    if (!cmd) {
+      task.status = 'failed'
+      task.endTime = new Date()
+      task.output.push('Error: Empty command')
+      return task
+    }
+
+    // SECURITY FIX: Use shell: false to prevent injection
     const proc = spawn(cmd, args, {
       cwd: cwd || process.cwd(),
-      shell: true,
-      stdio: ['pipe', 'pipe', 'pipe']
+      shell: false, // CRITICAL: Never use shell: true
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: process.env
     })
 
     this.processes.set(id, proc)
@@ -68,6 +151,9 @@ export class BackgroundWorker extends EventEmitter {
 
       // Notify user
       this.notifyCompletion(task)
+
+      // Cleanup old tasks
+      this.cleanupOldTasks()
     })
 
     proc.on('error', (error: Error) => {
@@ -115,6 +201,20 @@ export class BackgroundWorker extends EventEmitter {
     return Array.from(this.tasks.values())
       .sort((a, b) => b.startTime.getTime() - a.startTime.getTime())
       .slice(0, limit)
+  }
+
+  private cleanupOldTasks(): void {
+    // Remove completed tasks beyond limit
+    const tasks = Array.from(this.tasks.entries())
+      .filter(([_, t]) => t.status !== 'running')
+      .sort((a, b) => b[1].startTime.getTime() - a[1].startTime.getTime())
+
+    if (tasks.length > MAX_TASK_HISTORY) {
+      const toRemove = tasks.slice(MAX_TASK_HISTORY)
+      for (const [id] of toRemove) {
+        this.tasks.delete(id)
+      }
+    }
   }
 
   private notifyCompletion(task: BackgroundTask): void {

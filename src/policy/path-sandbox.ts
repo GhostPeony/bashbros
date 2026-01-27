@@ -1,5 +1,6 @@
 import { resolve } from 'path'
 import { homedir } from 'os'
+import { realpathSync, lstatSync, existsSync } from 'fs'
 import type { PathPolicy, PolicyViolation } from '../types.js'
 
 export class PathSandbox {
@@ -12,11 +13,25 @@ export class PathSandbox {
   }
 
   check(path: string): PolicyViolation | null {
-    const normalizedPath = this.normalizePath(path)
+    // SECURITY: Resolve symlinks to get real path
+    const { realPath, isSymlink } = this.resolvePath(path)
 
-    // Check block list first
+    // Check for symlink attacks
+    if (isSymlink) {
+      const originalNormalized = this.normalizePath(path)
+      // If symlink points outside of where it appears to be, block it
+      if (!realPath.startsWith(originalNormalized.split('/')[0])) {
+        return {
+          type: 'path',
+          rule: 'symlink_escape',
+          message: `Symlink escape detected: ${path} -> ${realPath}`
+        }
+      }
+    }
+
+    // Check block list first (use real path)
     for (const blocked of this.blockedPaths) {
-      if (normalizedPath.startsWith(blocked) || normalizedPath === blocked) {
+      if (realPath.startsWith(blocked) || realPath === blocked) {
         return {
           type: 'path',
           rule: `block: ${blocked}`,
@@ -25,15 +40,15 @@ export class PathSandbox {
       }
     }
 
-    // If allow list contains '*' or '.', allow anything not blocked
+    // If allow list contains '*', allow anything not blocked
     if (this.policy.allow.includes('*')) {
       return null
     }
 
-    // Check if path is within allowed directories
+    // Check if real path is within allowed directories
     const allowed = this.allowedPaths.some(
       allowedPath =>
-        normalizedPath.startsWith(allowedPath) || normalizedPath === allowedPath
+        realPath.startsWith(allowedPath) || realPath === allowedPath
     )
 
     if (!allowed) {
@@ -45,6 +60,30 @@ export class PathSandbox {
     }
 
     return null
+  }
+
+  /**
+   * SECURITY FIX: Resolve symlinks to detect escape attempts
+   */
+  private resolvePath(path: string): { realPath: string; isSymlink: boolean } {
+    const normalizedPath = this.normalizePath(path)
+
+    try {
+      // Check if path exists and is a symlink
+      if (existsSync(normalizedPath)) {
+        const stats = lstatSync(normalizedPath)
+        const isSymlink = stats.isSymbolicLink()
+
+        // Get real path (follows symlinks)
+        const realPath = realpathSync(normalizedPath)
+
+        return { realPath, isSymlink }
+      }
+    } catch {
+      // Path doesn't exist yet or can't be accessed
+    }
+
+    return { realPath: normalizedPath, isSymlink: false }
   }
 
   private normalizePath(path: string): string {
@@ -59,5 +98,33 @@ export class PathSandbox {
     }
 
     return resolve(path)
+  }
+
+  /**
+   * Check if a path would escape the sandbox via symlink
+   */
+  isSymlinkEscape(path: string): boolean {
+    const { realPath, isSymlink } = this.resolvePath(path)
+
+    if (!isSymlink) return false
+
+    // Check if real path is in blocked list
+    for (const blocked of this.blockedPaths) {
+      if (realPath.startsWith(blocked)) {
+        return true
+      }
+    }
+
+    // Check if real path escapes allowed directories
+    if (!this.policy.allow.includes('*')) {
+      const inAllowed = this.allowedPaths.some(
+        allowedPath => realPath.startsWith(allowedPath)
+      )
+      if (!inAllowed) {
+        return true
+      }
+    }
+
+    return false
   }
 }
