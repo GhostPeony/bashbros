@@ -90,6 +90,18 @@ bashbros hook install   # Auto-install hooks
 | `gate <cmd>` | Check if command should be allowed |
 | `record <cmd>` | Record command execution |
 
+### Hooks (Moltbot)
+
+| Command | Description |
+|---------|-------------|
+| `moltbot install` | Install BashBros hooks into Moltbot |
+| `moltbot uninstall` | Remove hooks from Moltbot |
+| `moltbot status` | Check integration status |
+| `moltbot gateway` | Check gateway status |
+| `moltbot audit` | Run security audit |
+
+Note: `clawdbot` is an alias for `moltbot` for backward compatibility.
+
 ### Undo
 
 | Command | Description |
@@ -174,7 +186,7 @@ $ bashbros undo last
 `.bashbros.yml`:
 
 ```yaml
-agent: claude-code  # or clawdbot, aider, opencode, custom
+agent: claude-code  # or moltbot, clawdbot, aider, opencode, custom
 profile: balanced   # strict, permissive, or custom
 
 commands:
@@ -265,7 +277,7 @@ undo:
 ## Works With
 
 - [Claude Code](https://claude.ai/claude-code) - Native hook integration
-- [Clawdbot](https://clawd.bot)
+- [Moltbot](https://clawd.bot) - Native hook integration (formerly clawdbot)
 - [Aider](https://aider.chat)
 - [OpenCode](https://github.com/opencode-ai/opencode)
 - [Ollama](https://ollama.ai) (local AI)
