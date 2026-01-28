@@ -4,167 +4,630 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BashBros Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
+    :root {
+      --white: #FFFFFF;
+      --grey-50: #FAFAFA;
+      --grey-100: #F5F5F5;
+      --grey-200: #EEEEEE;
+      --grey-300: #E0E0E0;
+      --grey-400: #BDBDBD;
+      --grey-500: #9E9E9E;
+      --grey-600: #757575;
+      --grey-700: #616161;
+      --grey-800: #424242;
+      --grey-900: #212121;
+      --teal: #4DB6AC;
+      --teal-light: #80CBC4;
+      --teal-dark: #00897B;
+      --red: #ef4444;
+      --yellow: #fbbf24;
+      --orange: #f97316;
+      --green: #22c55e;
+      --blue: #3b82f6;
+      --purple: #8b5cf6;
+      --border: 3px solid var(--grey-900);
+      --shadow: 6px 6px 0px var(--grey-900);
+      --shadow-sm: 4px 4px 0px var(--grey-900);
     }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-      background: #1a1a2e;
-      color: #eaeaea;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--grey-100);
+      color: var(--grey-900);
+      line-height: 1.6;
       min-height: 100vh;
-      padding: 20px;
     }
 
+    /* Header */
     .header {
+      background: var(--white);
+      border-bottom: var(--border);
+      padding: 16px 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 30px;
-      padding-bottom: 20px;
-      border-bottom: 1px solid #2d2d44;
+      position: sticky;
+      top: 0;
+      z-index: 100;
     }
 
-    .header h1 {
-      font-size: 24px;
-      font-weight: 600;
-      color: #fff;
+    .logo {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .logo-slash { color: var(--teal); }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
     }
 
     .connection-status {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 14px;
-      color: #888;
+      font-size: 0.9rem;
+      color: var(--grey-600);
     }
 
     .status-dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
-      background: #666;
+      background: var(--grey-400);
+    }
+    .status-dot.connected { background: var(--green); }
+    .status-dot.disconnected { background: var(--red); }
+
+    /* Navigation */
+    .nav-tabs {
+      background: var(--white);
+      border-bottom: var(--border);
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
     }
 
-    .status-dot.connected {
-      background: #4ade80;
+    .nav-tab {
+      padding: 16px 28px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 0.9rem;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      border-right: 2px solid var(--grey-300);
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
-    .status-dot.disconnected {
-      background: #ef4444;
+    .nav-tab:hover { background: var(--grey-100); }
+    .nav-tab.active {
+      background: var(--teal);
+      color: var(--white);
     }
 
+    .nav-badge {
+      background: var(--red);
+      color: var(--white);
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 10px;
+      font-weight: 700;
+    }
+
+    .nav-tab.active .nav-badge {
+      background: var(--white);
+      color: var(--teal-dark);
+    }
+
+    /* Main Content */
+    .main { padding: 24px; max-width: 1600px; margin: 0 auto; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--white);
+      border: var(--border);
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 24px;
+    }
+
+    .card-header {
+      background: var(--grey-200);
+      padding: 16px 20px;
+      border-bottom: 2px solid var(--grey-900);
+      font-weight: 700;
+      font-size: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .card-body { padding: 20px; }
+    .card-body.no-padding { padding: 0; }
+
+    /* Grid Layouts */
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    @media (max-width: 1200px) {
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      .grid-3 { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 768px) {
+      .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* Stats Grid */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 20px;
-      margin-bottom: 30px;
+      margin-bottom: 24px;
     }
 
     .stat-card {
-      background: #16213e;
-      border-radius: 12px;
+      background: var(--white);
+      border: var(--border);
+      box-shadow: var(--shadow-sm);
       padding: 20px;
-      border: 1px solid #2d2d44;
     }
 
-    .stat-card .label {
-      font-size: 14px;
-      color: #888;
+    .stat-label {
+      font-size: 0.85rem;
+      color: var(--grey-600);
       margin-bottom: 8px;
+      font-weight: 500;
     }
 
-    .stat-card .value {
-      font-size: 32px;
+    .stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 2rem;
       font-weight: 700;
-      color: #fff;
     }
 
-    .stat-card.warning .value {
-      color: #fbbf24;
+    .stat-value.warning { color: var(--yellow); }
+    .stat-value.error { color: var(--red); }
+    .stat-value.success { color: var(--green); }
+    .stat-value.info { color: var(--blue); }
+
+    /* Session Banner */
+    .session-banner {
+      background: var(--teal-light);
+      border: var(--border);
+      box-shadow: var(--shadow-sm);
+      padding: 16px 24px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
     }
 
-    .stat-card.error .value {
-      color: #ef4444;
+    .session-banner.inactive {
+      background: var(--grey-200);
     }
 
-    .stat-card.success .value {
-      color: #4ade80;
+    .session-info {
+      display: flex;
+      gap: 32px;
+      flex-wrap: wrap;
     }
 
-    .section {
-      background: #16213e;
-      border-radius: 12px;
-      padding: 20px;
-      border: 1px solid #2d2d44;
-      margin-bottom: 20px;
+    .session-stat {
+      display: flex;
+      flex-direction: column;
     }
 
-    .section h2 {
-      font-size: 18px;
+    .session-stat-label {
+      font-size: 0.75rem;
+      color: var(--grey-700);
+      text-transform: uppercase;
       font-weight: 600;
-      margin-bottom: 16px;
-      color: #fff;
     }
 
-    .activity-list {
-      list-style: none;
+    .session-stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 1.1rem;
+      font-weight: 700;
     }
+
+    /* Live Feed */
+    .live-feed {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .command-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--grey-200);
+      transition: background 0.15s;
+    }
+
+    .command-item:hover {
+      background: var(--grey-50);
+    }
+
+    .command-item:last-child { border-bottom: none; }
+
+    .command-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 8px;
+      flex-shrink: 0;
+    }
+
+    .command-status.allowed { background: var(--green); }
+    .command-status.blocked { background: var(--red); }
+
+    .command-content { flex: 1; min-width: 0; }
+
+    .command-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+
+    .command-meta {
+      display: flex;
+      gap: 16px;
+      margin-top: 4px;
+      font-size: 0.75rem;
+      color: var(--grey-500);
+    }
+
+    .risk-badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .risk-badge.safe { background: #dcfce7; color: #166534; }
+    .risk-badge.caution { background: #fef9c3; color: #854d0e; }
+    .risk-badge.dangerous { background: #fed7aa; color: #c2410c; }
+    .risk-badge.critical { background: #fecaca; color: #991b1b; }
+
+    /* Form Elements */
+    .form-group { margin-bottom: 20px; }
+
+    .form-label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+    }
+
+    .form-select, .form-input {
+      width: 100%;
+      padding: 12px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      border: 2px solid var(--grey-900);
+      background: var(--white);
+      transition: all 0.15s ease;
+    }
+
+    .form-select:focus, .form-input:focus {
+      outline: none;
+      box-shadow: 4px 4px 0px var(--teal);
+    }
+
+    /* Toggle Switch */
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--grey-200);
+    }
+
+    .toggle-row:last-child { border-bottom: none; }
+
+    .toggle-info h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .toggle-info p {
+      font-size: 0.85rem;
+      color: var(--grey-600);
+    }
+
+    .toggle {
+      position: relative;
+      width: 52px;
+      height: 28px;
+      cursor: pointer;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--grey-300);
+      border: 2px solid var(--grey-900);
+      transition: 0.2s;
+    }
+
+    .toggle-slider:before {
+      content: "";
+      position: absolute;
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background: var(--grey-900);
+      transition: 0.2s;
+    }
+
+    .toggle input:checked + .toggle-slider {
+      background: var(--teal);
+    }
+
+    .toggle input:checked + .toggle-slider:before {
+      transform: translateX(24px);
+      background: var(--white);
+    }
+
+    /* List Editor */
+    .list-editor {
+      border: 2px solid var(--grey-300);
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .list-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--grey-200);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+    }
+
+    .list-item:last-child { border-bottom: none; }
+    .list-item:nth-child(even) { background: var(--grey-50); }
+
+    .list-item-text {
+      flex: 1;
+      word-break: break-all;
+    }
+
+    .list-item-remove {
+      background: none;
+      border: none;
+      color: var(--red);
+      cursor: pointer;
+      font-size: 1.2rem;
+      padding: 0 8px;
+      font-weight: bold;
+    }
+
+    .list-add {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .list-add input { flex: 1; }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+      font-size: 0.9rem;
+      border: var(--border);
+      background: var(--white);
+      color: var(--grey-900);
+      cursor: pointer;
+      transition: all 0.15s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn:hover {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0px var(--grey-900);
+    }
+
+    .btn-primary {
+      background: var(--teal);
+      color: var(--white);
+    }
+
+    .btn-danger {
+      background: var(--red);
+      color: var(--white);
+    }
+
+    .btn-small {
+      padding: 8px 16px;
+      font-size: 0.8rem;
+      box-shadow: 2px 2px 0px var(--grey-900);
+    }
+
+    .btn-small:hover {
+      transform: translate(1px, 1px);
+      box-shadow: 1px 1px 0px var(--grey-900);
+    }
+
+    /* Tables */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .data-table th, .data-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--grey-200);
+    }
+
+    .data-table th {
+      background: var(--grey-100);
+      font-weight: 600;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      color: var(--grey-600);
+    }
+
+    .data-table tr:hover td {
+      background: var(--grey-50);
+    }
+
+    .data-table td {
+      font-size: 0.9rem;
+    }
+
+    /* Session List */
+    .session-list-item {
+      display: flex;
+      align-items: center;
+      padding: 16px;
+      border-bottom: 1px solid var(--grey-200);
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .session-list-item:hover {
+      background: var(--grey-50);
+    }
+
+    .session-list-item.active {
+      background: var(--teal-light);
+    }
+
+    .session-status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-right: 16px;
+    }
+
+    .session-status-indicator.active { background: var(--green); }
+    .session-status-indicator.completed { background: var(--grey-400); }
+    .session-status-indicator.crashed { background: var(--red); }
+
+    .session-list-info { flex: 1; }
+
+    .session-list-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .session-list-meta {
+      font-size: 0.8rem;
+      color: var(--grey-500);
+      margin-top: 4px;
+    }
+
+    .session-list-stats {
+      display: flex;
+      gap: 24px;
+      text-align: right;
+    }
+
+    .session-list-stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .session-list-stat-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+    }
+
+    .session-list-stat-label {
+      font-size: 0.7rem;
+      color: var(--grey-500);
+      text-transform: uppercase;
+    }
+
+    /* Activity List */
+    .activity-list { list-style: none; }
 
     .activity-item {
       display: flex;
       align-items: flex-start;
       gap: 12px;
       padding: 12px 0;
-      border-bottom: 1px solid #2d2d44;
+      border-bottom: 1px solid var(--grey-200);
     }
 
-    .activity-item:last-child {
-      border-bottom: none;
-    }
+    .activity-item:last-child { border-bottom: none; }
 
     .activity-icon {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
+      width: 36px;
+      height: 36px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 14px;
+      font-size: 1rem;
+      border: 2px solid var(--grey-900);
       flex-shrink: 0;
     }
 
-    .activity-icon.info {
-      background: #1e40af;
-      color: #60a5fa;
-    }
+    .activity-icon.info { background: var(--teal-light); }
+    .activity-icon.warning { background: var(--yellow); }
+    .activity-icon.error { background: var(--red); color: var(--white); }
+    .activity-icon.ai { background: var(--purple); color: var(--white); }
 
-    .activity-icon.warning {
-      background: #854d0e;
-      color: #fbbf24;
-    }
-
-    .activity-icon.error {
-      background: #7f1d1d;
-      color: #ef4444;
-    }
-
-    .activity-icon.debug {
-      background: #374151;
-      color: #9ca3af;
-    }
-
-    .activity-content {
-      flex: 1;
-      min-width: 0;
-    }
+    .activity-content { flex: 1; }
 
     .activity-message {
-      font-size: 14px;
-      color: #eaeaea;
+      font-size: 0.9rem;
       word-break: break-word;
     }
 
@@ -172,135 +635,1081 @@
       display: flex;
       gap: 16px;
       margin-top: 4px;
-      font-size: 12px;
-      color: #666;
+      font-size: 0.8rem;
+      color: var(--grey-500);
+      font-family: 'JetBrains Mono', monospace;
     }
 
-    .activity-meta span {
+    /* Bro Status Panel */
+    .bro-status-panel {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: 24px;
+      padding: 20px;
+      background: var(--grey-50);
+      border-bottom: 2px solid var(--grey-300);
     }
 
+    .bro-avatar {
+      width: 64px;
+      height: 64px;
+      background: var(--purple);
+      border: 3px solid var(--grey-900);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+    }
+
+    .bro-info { flex: 1; }
+
+    .bro-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .bro-subtitle {
+      font-size: 0.85rem;
+      color: var(--grey-600);
+      margin-top: 4px;
+    }
+
+    .bro-controls {
+      display: flex;
+      gap: 12px;
+    }
+
+    /* Empty State */
     .empty-state {
       text-align: center;
       padding: 40px 20px;
-      color: #666;
+      color: var(--grey-500);
     }
 
-    .empty-state p {
-      font-size: 14px;
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 16px 24px;
+      background: var(--grey-900);
+      color: var(--white);
+      font-family: 'JetBrains Mono', monospace;
+      border: var(--border);
+      box-shadow: var(--shadow);
+      z-index: 1000;
+      display: none;
+    }
+
+    .toast.success { background: var(--teal-dark); }
+    .toast.error { background: var(--red); }
+    .toast.show { display: block; animation: slideIn 0.3s ease; }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    /* Filter Bar */
+    .filter-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      padding: 8px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      border: 2px solid var(--grey-300);
+      background: var(--white);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-btn:hover {
+      border-color: var(--grey-900);
+    }
+
+    .filter-btn.active {
+      background: var(--grey-900);
+      color: var(--white);
+      border-color: var(--grey-900);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .nav-tabs { flex-wrap: nowrap; }
+      .nav-tab { flex: none; padding: 12px 16px; font-size: 0.8rem; }
+      .main { padding: 16px; }
+      .session-banner { flex-direction: column; }
+      .session-info { gap: 16px; }
+      .header { flex-direction: column; gap: 12px; }
+      .bro-status-panel { flex-direction: column; text-align: center; }
     }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>BashBros Dashboard</h1>
-    <div class="connection-status">
-      <span class="status-dot" id="connectionDot"></span>
-      <span id="connectionText">Connecting...</span>
+  <!-- Header -->
+  <header class="header">
+    <div class="logo">
+      <span class="logo-slash">/</span>BashBros Dashboard
     </div>
-  </div>
+    <div class="header-right">
+      <div class="connection-status">
+        <span class="status-dot" id="connectionDot"></span>
+        <span id="connectionText">Connecting...</span>
+      </div>
+    </div>
+  </header>
 
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="label">Total Events</div>
-      <div class="value" id="totalEvents">0</div>
-    </div>
-    <div class="stat-card warning">
-      <div class="label">Pending Blocks</div>
-      <div class="value" id="pendingBlocks">0</div>
-    </div>
-    <div class="stat-card success">
-      <div class="label">Active Connectors</div>
-      <div class="value" id="activeConnectors">0</div>
-    </div>
-    <div class="stat-card error">
-      <div class="label">Errors</div>
-      <div class="value" id="errors">0</div>
-    </div>
-  </div>
+  <!-- Navigation -->
+  <nav class="nav-tabs">
+    <button class="nav-tab active" data-tab="live">Live</button>
+    <button class="nav-tab" data-tab="sessions">Sessions</button>
+    <button class="nav-tab" data-tab="security">Security <span class="nav-badge" id="securityBadge" style="display:none">0</span></button>
+    <button class="nav-tab" data-tab="bro">Bash Bro</button>
+    <button class="nav-tab" data-tab="settings">Settings</button>
+  </nav>
 
-  <div class="section">
-    <h2>Recent Activity</h2>
-    <ul class="activity-list" id="activityList">
-      <li class="empty-state">
-        <p>No recent activity</p>
-      </li>
-    </ul>
-  </div>
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Live Tab -->
+    <div id="live" class="tab-content active">
+      <!-- Session Banner -->
+      <div class="session-banner" id="sessionBanner">
+        <div class="session-info">
+          <div class="session-stat">
+            <span class="session-stat-label">Session</span>
+            <span class="session-stat-value" id="liveSessionId">-</span>
+          </div>
+          <div class="session-stat">
+            <span class="session-stat-label">Duration</span>
+            <span class="session-stat-value" id="liveSessionDuration">-</span>
+          </div>
+          <div class="session-stat">
+            <span class="session-stat-label">Commands</span>
+            <span class="session-stat-value" id="liveSessionCommands">0</span>
+          </div>
+          <div class="session-stat">
+            <span class="session-stat-label">Avg Risk</span>
+            <span class="session-stat-value" id="liveSessionRisk">-</span>
+          </div>
+        </div>
+        <div id="sessionStatus">
+          <span class="status-dot" id="sessionStatusDot"></span>
+          <span id="sessionStatusText">No active session</span>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <!-- Live Command Feed -->
+        <div class="card">
+          <div class="card-header">
+            Live Command Feed
+            <span style="font-size: 0.8rem; color: var(--grey-500);">Auto-updating</span>
+          </div>
+          <div class="card-body no-padding">
+            <div class="live-feed" id="liveCommandFeed">
+              <div class="empty-state">Waiting for commands...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Violations -->
+        <div class="card">
+          <div class="card-header">Recent Violations</div>
+          <div class="card-body no-padding">
+            <div class="live-feed" id="recentViolations">
+              <div class="empty-state">No violations</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Stats -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Today's Commands</div>
+          <div class="stat-value" id="todayCommands">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Today's Violations</div>
+          <div class="stat-value error" id="todayViolations">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Avg Risk (24h)</div>
+          <div class="stat-value" id="avgRisk24h">-</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Ollama Status</div>
+          <div class="stat-value" id="ollamaStatusStat">-</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sessions Tab -->
+    <div id="sessions" class="tab-content">
+      <div class="filter-bar">
+        <button class="filter-btn active" data-filter="all" onclick="filterSessions('all')">All</button>
+        <button class="filter-btn" data-filter="today" onclick="filterSessions('today')">Today</button>
+        <button class="filter-btn" data-filter="week" onclick="filterSessions('week')">This Week</button>
+        <button class="filter-btn" data-filter="month" onclick="filterSessions('month')">This Month</button>
+      </div>
+
+      <div class="grid-2">
+        <!-- Session List -->
+        <div class="card">
+          <div class="card-header">Sessions</div>
+          <div class="card-body no-padding">
+            <div id="sessionList">
+              <div class="empty-state">No sessions recorded</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Session Detail -->
+        <div class="card">
+          <div class="card-header">Session Detail</div>
+          <div class="card-body" id="sessionDetail">
+            <div class="empty-state">Select a session to view details</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Tab -->
+    <div id="security" class="tab-content">
+      <!-- Pending Egress Blocks -->
+      <div class="card">
+        <div class="card-header">
+          Pending Egress Blocks
+          <button class="btn btn-small" onclick="fetchBlocked()">Refresh</button>
+        </div>
+        <div class="card-body no-padding">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Pattern</th>
+                <th>Matched Text</th>
+                <th>Connector</th>
+                <th>Time</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="egressBlocksTable">
+              <tr><td colspan="5" class="empty-state">No pending blocks</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Exposure Scans -->
+      <div class="card">
+        <div class="card-header">
+          Network Exposure Scans
+          <button class="btn btn-small" onclick="fetchExposures()">Refresh</button>
+        </div>
+        <div class="card-body no-padding">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Severity</th>
+                <th>Port</th>
+                <th>Bind Address</th>
+                <th>Agent</th>
+                <th>Has Auth</th>
+                <th>Action</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="exposuresTable">
+              <tr><td colspan="7" class="empty-state">No exposure scans</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Violation Summary -->
+      <div class="card">
+        <div class="card-header">Violation Summary (Last 24h)</div>
+        <div class="card-body">
+          <div id="violationSummary">
+            <div class="empty-state">Loading...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bash Bro Tab -->
+    <div id="bro" class="tab-content">
+      <!-- Bro Status Panel -->
+      <div class="card">
+        <div class="bro-status-panel">
+          <div class="bro-avatar">AI</div>
+          <div class="bro-info">
+            <div class="bro-title">
+              Bash Bro
+              <span class="status-dot" id="broStatusDot"></span>
+            </div>
+            <div class="bro-subtitle" id="broModelInfo">Checking Ollama connection...</div>
+          </div>
+          <div class="bro-controls">
+            <select class="form-select" id="modelSelect" style="width: auto; min-width: 200px;">
+              <option value="">Loading models...</option>
+            </select>
+            <button class="btn btn-primary btn-small" onclick="changeModel()">Apply</button>
+            <button class="btn btn-small" onclick="triggerScan()">Scan System</button>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-label">Platform</div>
+              <div class="stat-value" id="broPlatform" style="font-size: 1.2rem;">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Shell</div>
+              <div class="stat-value" id="broShell" style="font-size: 1.2rem;">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">Project Type</div>
+              <div class="stat-value" id="broProjectType" style="font-size: 1.2rem;">-</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">AI Requests Today</div>
+              <div class="stat-value info" id="broRequestsToday">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bro Activity Log -->
+      <div class="card">
+        <div class="card-header">
+          AI Activity Log
+          <button class="btn btn-small" onclick="fetchBroEvents()">Refresh</button>
+        </div>
+        <div class="card-body">
+          <ul class="activity-list" id="broActivityLog">
+            <li class="empty-state">No AI activity recorded</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div id="settings" class="tab-content">
+      <div class="grid-2">
+        <div>
+          <div class="card">
+            <div class="card-header">
+              Security Profile
+              <button class="btn btn-primary btn-small" onclick="saveConfig()">Save Changes</button>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label class="form-label">Profile</label>
+                <select class="form-select" id="profileSelect">
+                  <option value="permissive">Permissive - Allow all, block dangerous</option>
+                  <option value="balanced">Balanced - Explicit allowlist</option>
+                  <option value="strict">Strict - Minimal access</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Allowed Commands</div>
+            <div class="card-body">
+              <p style="margin-bottom: 12px; color: var(--grey-600); font-size: 0.9rem;">
+                Commands that are always allowed. Use * as wildcard.
+              </p>
+              <div class="list-editor" id="allowList"></div>
+              <div class="list-add">
+                <input type="text" class="form-input" id="allowInput" placeholder="Add command pattern (e.g., docker *)">
+                <button class="btn btn-small" onclick="addToList('allow')">Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Blocked Commands</div>
+            <div class="card-body">
+              <p style="margin-bottom: 12px; color: var(--grey-600); font-size: 0.9rem;">
+                Commands that are always blocked, even in permissive mode.
+              </p>
+              <div class="list-editor" id="blockList"></div>
+              <div class="list-add">
+                <input type="text" class="form-input" id="blockInput" placeholder="Add blocked pattern (e.g., rm -rf /*)">
+                <button class="btn btn-small" onclick="addToList('block')">Add</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="card">
+            <div class="card-header">Security Features</div>
+            <div class="card-body">
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Secrets Guard</h4>
+                  <p>Block access to .env files, API keys, and credentials</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="secretsEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Audit Log</h4>
+                  <p>Record all command executions and violations</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="auditEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Rate Limiter</h4>
+                  <p>Prevent runaway agents with command rate limits</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="rateLimitEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Risk Scoring</h4>
+                  <p>Score commands by danger level (1-10)</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="riskScoringEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Loop Detection</h4>
+                  <p>Detect stuck or repetitive agent behavior</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="loopDetectionEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Anomaly Detection</h4>
+                  <p>Flag unusual patterns and suspicious commands</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="anomalyDetectionEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Output Scanning</h4>
+                  <p>Detect and redact leaked secrets in output</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="outputScanningEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Undo Stack</h4>
+                  <p>Enable rollback of file changes</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="undoEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-info">
+                  <h4>Ward Security</h4>
+                  <p>Network exposure and egress monitoring</p>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="wardEnabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">Data Retention</div>
+            <div class="card-body">
+              <div class="form-group">
+                <label class="form-label">Retention Period</label>
+                <select class="form-select" id="retentionSelect">
+                  <option value="7">7 days</option>
+                  <option value="14">14 days</option>
+                  <option value="30" selected>30 days</option>
+                  <option value="60">60 days</option>
+                  <option value="90">90 days</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
 
   <script>
-    // Dashboard state
+    // State
+    let config = null;
     let ws = null;
-    let reconnectTimeout = null;
+    let activeTab = 'live';
+    let selectedSessionId = null;
+    let livePollingInterval = null;
+    let backgroundPollingInterval = null;
+    let lastCommandId = null;
 
-    // DOM elements
+    // DOM Elements
     const connectionDot = document.getElementById('connectionDot');
     const connectionText = document.getElementById('connectionText');
-    const totalEventsEl = document.getElementById('totalEvents');
-    const pendingBlocksEl = document.getElementById('pendingBlocks');
-    const activeConnectorsEl = document.getElementById('activeConnectors');
-    const errorsEl = document.getElementById('errors');
-    const activityList = document.getElementById('activityList');
+    const toast = document.getElementById('toast');
 
-    // Update connection status
+    // Tab Navigation
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        const tabId = tab.dataset.tab;
+        document.getElementById(tabId).classList.add('active');
+        activeTab = tabId;
+        onTabChange(tabId);
+      });
+    });
+
+    function onTabChange(tabId) {
+      // Adjust polling based on active tab
+      if (tabId === 'live') {
+        startLivePolling();
+      } else {
+        stopLivePolling();
+      }
+
+      // Load tab-specific data
+      if (tabId === 'sessions') fetchSessions();
+      if (tabId === 'security') {
+        fetchBlocked();
+        fetchExposures();
+      }
+      if (tabId === 'bro') {
+        fetchBroStatus();
+        fetchBroModels();
+        fetchBroEvents();
+      }
+      if (tabId === 'settings') loadConfig();
+    }
+
+    // Show Toast
+    function showToast(message, type = 'success') {
+      toast.textContent = message;
+      toast.className = 'toast ' + type + ' show';
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    // Connection Status
     function setConnectionStatus(connected) {
       connectionDot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
       connectionText.textContent = connected ? 'Connected' : 'Disconnected';
     }
 
-    // Update stats display
-    function updateStats(stats) {
-      totalEventsEl.textContent = stats.totalEvents || 0;
-      pendingBlocksEl.textContent = stats.pendingBlocks || 0;
-      activeConnectorsEl.textContent = stats.connectorCount || 0;
-      errorsEl.textContent = (stats.eventsByLevel && stats.eventsByLevel.error) || 0;
+    // ─────────────────────────────────────────────────────────────
+    // Live Tab Functions
+    // ─────────────────────────────────────────────────────────────
+
+    function startLivePolling() {
+      fetchLiveData();
+      if (livePollingInterval) clearInterval(livePollingInterval);
+      livePollingInterval = setInterval(fetchLiveData, 1000);
     }
 
-    // Format timestamp
-    function formatTime(timestamp) {
-      const date = new Date(timestamp);
-      return date.toLocaleTimeString();
-    }
-
-    // Get icon class based on level
-    function getIconClass(level) {
-      switch (level) {
-        case 'error': return 'error';
-        case 'warning': return 'warning';
-        case 'debug': return 'debug';
-        default: return 'info';
+    function stopLivePolling() {
+      if (livePollingInterval) {
+        clearInterval(livePollingInterval);
+        livePollingInterval = null;
       }
     }
 
-    // Get icon symbol based on level
-    function getIconSymbol(level) {
-      switch (level) {
-        case 'error': return '!';
-        case 'warning': return '!';
-        case 'debug': return '#';
-        default: return 'i';
+    async function fetchLiveData() {
+      try {
+        // Fetch active session
+        const sessionRes = await fetch('/api/sessions/active');
+        const session = await sessionRes.json();
+        updateSessionBanner(session);
+
+        // Fetch live commands
+        const commandsRes = await fetch('/api/commands/live?limit=30');
+        const commands = await commandsRes.json();
+        renderLiveCommands(commands);
+
+        // Fetch stats
+        const statsRes = await fetch('/api/stats');
+        const stats = await statsRes.json();
+        updateLiveStats(stats);
+      } catch (error) {
+        console.error('Failed to fetch live data:', error);
       }
     }
 
-    // Update activity list
-    function updateActivity(events) {
-      if (!events || events.length === 0) {
-        activityList.innerHTML = '<li class="empty-state"><p>No recent activity</p></li>';
+    function updateSessionBanner(session) {
+      const banner = document.getElementById('sessionBanner');
+      const statusDot = document.getElementById('sessionStatusDot');
+      const statusText = document.getElementById('sessionStatusText');
+
+      if (session) {
+        banner.classList.remove('inactive');
+        document.getElementById('liveSessionId').textContent = session.id.slice(0, 8) + '...';
+        document.getElementById('liveSessionCommands').textContent = session.commandCount;
+        document.getElementById('liveSessionRisk').textContent = session.avgRiskScore.toFixed(1);
+
+        // Calculate duration
+        const start = new Date(session.startTime);
+        const duration = Math.floor((Date.now() - start.getTime()) / 1000);
+        const mins = Math.floor(duration / 60);
+        const secs = duration % 60;
+        document.getElementById('liveSessionDuration').textContent = `${mins}m ${secs}s`;
+
+        statusDot.className = 'status-dot connected';
+        statusText.textContent = 'Session Active';
+      } else {
+        banner.classList.add('inactive');
+        document.getElementById('liveSessionId').textContent = '-';
+        document.getElementById('liveSessionDuration').textContent = '-';
+        document.getElementById('liveSessionCommands').textContent = '0';
+        document.getElementById('liveSessionRisk').textContent = '-';
+
+        statusDot.className = 'status-dot disconnected';
+        statusText.textContent = 'No active session';
+      }
+    }
+
+    function renderLiveCommands(commands) {
+      const feed = document.getElementById('liveCommandFeed');
+      const violations = document.getElementById('recentViolations');
+
+      if (!commands || commands.length === 0) {
+        feed.innerHTML = '<div class="empty-state">Waiting for commands...</div>';
+        violations.innerHTML = '<div class="empty-state">No violations</div>';
         return;
       }
 
-      activityList.innerHTML = events.slice(0, 20).map(event => `
-        <li class="activity-item">
-          <div class="activity-icon ${getIconClass(event.level)}">
-            ${getIconSymbol(event.level)}
+      // Render all commands
+      feed.innerHTML = commands.map(cmd => `
+        <div class="command-item">
+          <div class="command-status ${cmd.allowed ? 'allowed' : 'blocked'}"></div>
+          <div class="command-content">
+            <div class="command-text">${escapeHtml(cmd.command)}</div>
+            <div class="command-meta">
+              <span class="risk-badge ${cmd.riskLevel}">${cmd.riskLevel} (${cmd.riskScore})</span>
+              <span>${formatTime(cmd.timestamp)}</span>
+              ${cmd.durationMs ? `<span>${cmd.durationMs}ms</span>` : ''}
+            </div>
           </div>
+        </div>
+      `).join('');
+
+      // Render violations only
+      const blockedCommands = commands.filter(c => !c.allowed);
+      if (blockedCommands.length === 0) {
+        violations.innerHTML = '<div class="empty-state">No violations</div>';
+      } else {
+        violations.innerHTML = blockedCommands.map(cmd => `
+          <div class="command-item">
+            <div class="command-status blocked"></div>
+            <div class="command-content">
+              <div class="command-text">${escapeHtml(cmd.command)}</div>
+              <div class="command-meta">
+                <span class="risk-badge ${cmd.riskLevel}">${cmd.riskLevel}</span>
+                <span>${formatTime(cmd.timestamp)}</span>
+                ${cmd.violations.length > 0 ? `<span>${cmd.violations[0]}</span>` : ''}
+              </div>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+
+    function updateLiveStats(stats) {
+      document.getElementById('todayCommands').textContent = stats.todayCommands || 0;
+      document.getElementById('todayViolations').textContent = stats.todayViolations || 0;
+      document.getElementById('avgRisk24h').textContent = stats.avgRiskScore24h ? stats.avgRiskScore24h.toFixed(1) : '-';
+
+      const ollamaEl = document.getElementById('ollamaStatusStat');
+      if (stats.ollamaStatus === 'connected') {
+        ollamaEl.textContent = 'ON';
+        ollamaEl.className = 'stat-value success';
+      } else if (stats.ollamaStatus === 'disconnected') {
+        ollamaEl.textContent = 'OFF';
+        ollamaEl.className = 'stat-value error';
+      } else {
+        ollamaEl.textContent = '-';
+        ollamaEl.className = 'stat-value';
+      }
+
+      // Update security badge
+      const badge = document.getElementById('securityBadge');
+      if (stats.pendingBlocks > 0) {
+        badge.textContent = stats.pendingBlocks;
+        badge.style.display = 'inline';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Sessions Tab Functions
+    // ─────────────────────────────────────────────────────────────
+
+    let sessionFilter = 'all';
+
+    function filterSessions(filter) {
+      sessionFilter = filter;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+      });
+      fetchSessions();
+    }
+
+    async function fetchSessions() {
+      try {
+        let url = '/api/sessions?limit=50';
+
+        if (sessionFilter === 'today') {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          url += `&since=${today.toISOString()}`;
+        } else if (sessionFilter === 'week') {
+          const week = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+          url += `&since=${week.toISOString()}`;
+        } else if (sessionFilter === 'month') {
+          const month = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+          url += `&since=${month.toISOString()}`;
+        }
+
+        const response = await fetch(url);
+        const sessions = await response.json();
+        renderSessionList(sessions);
+      } catch (error) {
+        console.error('Failed to fetch sessions:', error);
+      }
+    }
+
+    function renderSessionList(sessions) {
+      const list = document.getElementById('sessionList');
+
+      if (!sessions || sessions.length === 0) {
+        list.innerHTML = '<div class="empty-state">No sessions recorded</div>';
+        return;
+      }
+
+      list.innerHTML = sessions.map(session => `
+        <div class="session-list-item ${selectedSessionId === session.id ? 'active' : ''}"
+             onclick="selectSession('${session.id}')">
+          <div class="session-status-indicator ${session.status}"></div>
+          <div class="session-list-info">
+            <div class="session-list-title">${session.agent} - ${session.id.slice(0, 8)}...</div>
+            <div class="session-list-meta">
+              ${formatDateTime(session.startTime)}
+              ${session.endTime ? ` - ${formatDateTime(session.endTime)}` : ' (active)'}
+            </div>
+          </div>
+          <div class="session-list-stats">
+            <div class="session-list-stat">
+              <span class="session-list-stat-value">${session.commandCount}</span>
+              <span class="session-list-stat-label">Commands</span>
+            </div>
+            <div class="session-list-stat">
+              <span class="session-list-stat-value" style="color: var(--red)">${session.blockedCount}</span>
+              <span class="session-list-stat-label">Blocked</span>
+            </div>
+            <div class="session-list-stat">
+              <span class="session-list-stat-value">${session.avgRiskScore.toFixed(1)}</span>
+              <span class="session-list-stat-label">Avg Risk</span>
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function selectSession(sessionId) {
+      selectedSessionId = sessionId;
+      fetchSessions(); // Re-render to show selection
+
+      try {
+        // Fetch session details
+        const [sessionRes, metricsRes, commandsRes] = await Promise.all([
+          fetch(`/api/sessions/${sessionId}`),
+          fetch(`/api/sessions/${sessionId}/metrics`),
+          fetch(`/api/sessions/${sessionId}/commands?limit=20`)
+        ]);
+
+        const session = await sessionRes.json();
+        const metrics = await metricsRes.json();
+        const commands = await commandsRes.json();
+
+        renderSessionDetail(session, metrics, commands);
+      } catch (error) {
+        console.error('Failed to fetch session detail:', error);
+      }
+    }
+
+    function renderSessionDetail(session, metrics, commands) {
+      const detail = document.getElementById('sessionDetail');
+
+      detail.innerHTML = `
+        <div style="margin-bottom: 20px;">
+          <h3 style="margin-bottom: 8px;">${session.agent} Session</h3>
+          <p style="color: var(--grey-600); font-size: 0.9rem;">
+            ${session.workingDir}<br>
+            Started: ${formatDateTime(session.startTime)}<br>
+            ${session.endTime ? `Ended: ${formatDateTime(session.endTime)}` : 'Currently active'}
+          </p>
+        </div>
+
+        <div class="stats-grid" style="margin-bottom: 20px;">
+          <div class="stat-card">
+            <div class="stat-label">Total Commands</div>
+            <div class="stat-value" style="font-size: 1.5rem;">${metrics.totalCommands}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Allowed</div>
+            <div class="stat-value success" style="font-size: 1.5rem;">${metrics.allowedCommands}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Blocked</div>
+            <div class="stat-value error" style="font-size: 1.5rem;">${metrics.blockedCommands}</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Avg Risk</div>
+            <div class="stat-value" style="font-size: 1.5rem;">${metrics.avgRiskScore.toFixed(1)}</div>
+          </div>
+        </div>
+
+        <h4 style="margin-bottom: 12px;">Risk Distribution</h4>
+        <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
+          ${Object.entries(metrics.riskDistribution).map(([level, count]) => `
+            <div class="risk-badge ${level}" style="padding: 8px 16px; font-size: 0.9rem;">
+              ${level}: ${count}
+            </div>
+          `).join('')}
+        </div>
+
+        <h4 style="margin-bottom: 12px;">Recent Commands</h4>
+        <div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--grey-200);">
+          ${commands.map(cmd => `
+            <div class="command-item" style="padding: 8px 12px;">
+              <div class="command-status ${cmd.allowed ? 'allowed' : 'blocked'}"></div>
+              <div class="command-content">
+                <div class="command-text" style="font-size: 0.85rem;">${escapeHtml(cmd.command)}</div>
+                <div class="command-meta">
+                  <span class="risk-badge ${cmd.riskLevel}">${cmd.riskScore}</span>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Security Tab Functions
+    // ─────────────────────────────────────────────────────────────
+
+    async function fetchBlocked() {
+      try {
+        const response = await fetch('/api/blocked');
+        const blocks = await response.json();
+        renderEgressBlocks(blocks);
+      } catch (error) {
+        console.error('Failed to fetch blocks:', error);
+      }
+    }
+
+    function renderEgressBlocks(blocks) {
+      const tbody = document.getElementById('egressBlocksTable');
+
+      if (!blocks || blocks.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No pending blocks</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = blocks.map(block => `
+        <tr>
+          <td><code>${escapeHtml(block.pattern?.name || 'Unknown')}</code></td>
+          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">
+            <code>${escapeHtml(block.redactedText)}</code>
+          </td>
+          <td>${block.connector || '-'}</td>
+          <td>${formatTime(block.timestamp)}</td>
+          <td>
+            <button class="btn btn-small btn-primary" onclick="approveBlock('${block.id}')" style="margin-right: 8px;">Approve</button>
+            <button class="btn btn-small btn-danger" onclick="denyBlock('${block.id}')">Deny</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    async function approveBlock(id) {
+      try {
+        await fetch(`/api/blocked/${id}/approve`, { method: 'POST' });
+        showToast('Block approved');
+        fetchBlocked();
+      } catch (error) {
+        showToast('Failed to approve', 'error');
+      }
+    }
+
+    async function denyBlock(id) {
+      try {
+        await fetch(`/api/blocked/${id}/deny`, { method: 'POST' });
+        showToast('Block denied');
+        fetchBlocked();
+      } catch (error) {
+        showToast('Failed to deny', 'error');
+      }
+    }
+
+    async function fetchExposures() {
+      try {
+        const response = await fetch('/api/exposures?limit=50');
+        const exposures = await response.json();
+        renderExposures(exposures);
+      } catch (error) {
+        console.error('Failed to fetch exposures:', error);
+      }
+    }
+
+    function renderExposures(exposures) {
+      const tbody = document.getElementById('exposuresTable');
+
+      if (!exposures || exposures.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No exposure scans</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = exposures.map(exp => `
+        <tr>
+          <td><span class="risk-badge ${exp.severity === 'critical' ? 'critical' : exp.severity === 'high' ? 'dangerous' : exp.severity === 'medium' ? 'caution' : 'safe'}">${exp.severity}</span></td>
+          <td>${exp.port}</td>
+          <td><code>${exp.bindAddress}</code></td>
+          <td>${exp.agent}</td>
+          <td>${exp.hasAuth === true ? 'Yes' : exp.hasAuth === false ? 'No' : 'Unknown'}</td>
+          <td>${exp.action}</td>
+          <td style="max-width: 300px;">${escapeHtml(exp.message)}</td>
+        </tr>
+      `).join('');
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Bash Bro Tab Functions
+    // ─────────────────────────────────────────────────────────────
+
+    async function fetchBroStatus() {
+      try {
+        const response = await fetch('/api/bro/status');
+        const status = await response.json();
+
+        const statusDot = document.getElementById('broStatusDot');
+        const modelInfo = document.getElementById('broModelInfo');
+
+        if (status && status.ollamaAvailable) {
+          statusDot.className = 'status-dot connected';
+          modelInfo.textContent = `Connected - Model: ${status.ollamaModel}`;
+
+          document.getElementById('broPlatform').textContent = status.platform || '-';
+          document.getElementById('broShell').textContent = status.shell || '-';
+          document.getElementById('broProjectType').textContent = status.projectType || 'Unknown';
+        } else {
+          statusDot.className = 'status-dot disconnected';
+          modelInfo.textContent = 'Ollama not connected';
+
+          document.getElementById('broPlatform').textContent = '-';
+          document.getElementById('broShell').textContent = '-';
+          document.getElementById('broProjectType').textContent = '-';
+        }
+      } catch (error) {
+        console.error('Failed to fetch Bro status:', error);
+      }
+    }
+
+    async function fetchBroModels() {
+      try {
+        const response = await fetch('/api/bro/models');
+        const data = await response.json();
+
+        const select = document.getElementById('modelSelect');
+
+        if (data.available && data.models.length > 0) {
+          select.innerHTML = data.models.map(model =>
+            `<option value="${model}">${model}</option>`
+          ).join('');
+        } else {
+          select.innerHTML = '<option value="">Ollama not available</option>';
+        }
+      } catch (error) {
+        console.error('Failed to fetch models:', error);
+      }
+    }
+
+    async function fetchBroEvents() {
+      try {
+        const response = await fetch('/api/bro/events?limit=50');
+        const events = await response.json();
+        renderBroEvents(events);
+
+        // Count today's events
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayEvents = events.filter(e => new Date(e.timestamp) >= today);
+        document.getElementById('broRequestsToday').textContent = todayEvents.length;
+      } catch (error) {
+        console.error('Failed to fetch Bro events:', error);
+      }
+    }
+
+    function renderBroEvents(events) {
+      const list = document.getElementById('broActivityLog');
+
+      if (!events || events.length === 0) {
+        list.innerHTML = '<li class="empty-state">No AI activity recorded</li>';
+        return;
+      }
+
+      list.innerHTML = events.map(event => `
+        <li class="activity-item">
+          <div class="activity-icon ai">${getEventIcon(event.eventType)}</div>
           <div class="activity-content">
-            <div class="activity-message">${escapeHtml(event.message)}</div>
+            <div class="activity-message">
+              <strong>${formatEventType(event.eventType)}</strong><br>
+              Input: ${escapeHtml(event.inputContext.slice(0, 100))}${event.inputContext.length > 100 ? '...' : ''}<br>
+              ${event.success ? `Output: ${escapeHtml(event.outputSummary.slice(0, 100))}${event.outputSummary.length > 100 ? '...' : ''}` : '<span style="color:var(--red)">Failed</span>'}
+            </div>
             <div class="activity-meta">
-              <span>${event.source}</span>
-              <span>${event.category}</span>
+              <span>${event.modelUsed}</span>
+              <span>${event.latencyMs}ms</span>
               <span>${formatTime(event.timestamp)}</span>
             </div>
           </div>
@@ -308,103 +1717,291 @@
       `).join('');
     }
 
-    // Escape HTML to prevent XSS
+    function getEventIcon(type) {
+      const icons = {
+        'suggestion': '?',
+        'explanation': 'i',
+        'fix': 'F',
+        'script': 'S',
+        'safety': '!'
+      };
+      return icons[type] || 'AI';
+    }
+
+    function formatEventType(type) {
+      const names = {
+        'suggestion': 'Command Suggestion',
+        'explanation': 'Command Explanation',
+        'fix': 'Error Fix',
+        'script': 'Script Generation',
+        'safety': 'Safety Analysis'
+      };
+      return names[type] || type;
+    }
+
+    async function changeModel() {
+      const select = document.getElementById('modelSelect');
+      const model = select.value;
+
+      if (!model) {
+        showToast('Select a model first', 'error');
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/bro/model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model })
+        });
+
+        if (response.ok) {
+          showToast(`Model changed to ${model}`);
+        } else {
+          showToast('Failed to change model', 'error');
+        }
+      } catch (error) {
+        showToast('Failed to change model', 'error');
+      }
+    }
+
+    async function triggerScan() {
+      try {
+        const response = await fetch('/api/bro/scan', { method: 'POST' });
+
+        if (response.ok) {
+          showToast('System scan requested');
+        } else {
+          showToast('Failed to trigger scan', 'error');
+        }
+      } catch (error) {
+        showToast('Failed to trigger scan', 'error');
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Settings Tab Functions
+    // ─────────────────────────────────────────────────────────────
+
+    function renderList(type) {
+      const listEl = document.getElementById(type + 'List');
+      const items = type === 'allow' ? config.commands?.allow : config.commands?.block;
+
+      if (!items || items.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No items</div>';
+        return;
+      }
+
+      listEl.innerHTML = items.map((item, idx) => `
+        <div class="list-item">
+          <span class="list-item-text">${escapeHtml(item)}</span>
+          <button class="list-item-remove" onclick="removeFromList('${type}', ${idx})">x</button>
+        </div>
+      `).join('');
+    }
+
+    function addToList(type) {
+      const input = document.getElementById(type + 'Input');
+      const value = input.value.trim();
+      if (!value) return;
+
+      if (!config.commands) config.commands = { allow: [], block: [] };
+
+      if (type === 'allow') {
+        if (!config.commands.allow) config.commands.allow = [];
+        config.commands.allow.push(value);
+      } else {
+        if (!config.commands.block) config.commands.block = [];
+        config.commands.block.push(value);
+      }
+
+      input.value = '';
+      renderList(type);
+    }
+
+    function removeFromList(type, idx) {
+      if (type === 'allow') {
+        config.commands.allow.splice(idx, 1);
+      } else {
+        config.commands.block.splice(idx, 1);
+      }
+      renderList(type);
+    }
+
+    async function loadConfig() {
+      try {
+        const response = await fetch('/api/config');
+        if (response.ok) {
+          config = await response.json();
+          updateSettingsUI();
+        } else {
+          showToast('Failed to load config', 'error');
+        }
+      } catch (error) {
+        console.error('Failed to load config:', error);
+        showToast('Failed to load config', 'error');
+      }
+    }
+
+    async function saveConfig() {
+      config.profile = document.getElementById('profileSelect').value;
+      config.secrets = config.secrets || {};
+      config.secrets.enabled = document.getElementById('secretsEnabled').checked;
+      config.audit = config.audit || {};
+      config.audit.enabled = document.getElementById('auditEnabled').checked;
+      config.rateLimit = config.rateLimit || {};
+      config.rateLimit.enabled = document.getElementById('rateLimitEnabled').checked;
+      config.riskScoring = config.riskScoring || {};
+      config.riskScoring.enabled = document.getElementById('riskScoringEnabled').checked;
+      config.loopDetection = config.loopDetection || {};
+      config.loopDetection.enabled = document.getElementById('loopDetectionEnabled').checked;
+      config.anomalyDetection = config.anomalyDetection || {};
+      config.anomalyDetection.enabled = document.getElementById('anomalyDetectionEnabled').checked;
+      config.outputScanning = config.outputScanning || {};
+      config.outputScanning.enabled = document.getElementById('outputScanningEnabled').checked;
+      config.undo = config.undo || {};
+      config.undo.enabled = document.getElementById('undoEnabled').checked;
+      config.ward = config.ward || {};
+      config.ward.enabled = document.getElementById('wardEnabled').checked;
+
+      try {
+        const response = await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config)
+        });
+
+        if (response.ok) {
+          showToast('Configuration saved!', 'success');
+        } else {
+          showToast('Failed to save config', 'error');
+        }
+      } catch (error) {
+        console.error('Failed to save config:', error);
+        showToast('Failed to save config', 'error');
+      }
+    }
+
+    function updateSettingsUI() {
+      if (!config) return;
+
+      document.getElementById('profileSelect').value = config.profile || 'permissive';
+
+      document.getElementById('secretsEnabled').checked = config.secrets?.enabled !== false;
+      document.getElementById('auditEnabled').checked = config.audit?.enabled !== false;
+      document.getElementById('rateLimitEnabled').checked = config.rateLimit?.enabled !== false;
+      document.getElementById('riskScoringEnabled').checked = config.riskScoring?.enabled !== false;
+      document.getElementById('loopDetectionEnabled').checked = config.loopDetection?.enabled !== false;
+      document.getElementById('anomalyDetectionEnabled').checked = config.anomalyDetection?.enabled !== false;
+      document.getElementById('outputScanningEnabled').checked = config.outputScanning?.enabled !== false;
+      document.getElementById('undoEnabled').checked = config.undo?.enabled !== false;
+      document.getElementById('wardEnabled').checked = config.ward?.enabled !== false;
+
+      renderList('allow');
+      renderList('block');
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Utility Functions
+    // ─────────────────────────────────────────────────────────────
+
+    function formatTime(ts) {
+      if (!ts) return '-';
+      return new Date(ts).toLocaleTimeString();
+    }
+
+    function formatDateTime(ts) {
+      if (!ts) return '-';
+      return new Date(ts).toLocaleString();
+    }
+
     function escapeHtml(text) {
+      if (!text) return '';
       const div = document.createElement('div');
       div.textContent = text;
       return div.innerHTML;
     }
 
-    // Fetch stats from API
+    // ─────────────────────────────────────────────────────────────
+    // WebSocket
+    // ─────────────────────────────────────────────────────────────
+
+    function connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      try {
+        ws = new WebSocket(`${protocol}//${window.location.host}`);
+        ws.onopen = () => setConnectionStatus(true);
+        ws.onclose = () => {
+          setConnectionStatus(false);
+          setTimeout(connectWebSocket, 5000);
+        };
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'command' && activeTab === 'live') {
+              fetchLiveData();
+            }
+          } catch (err) {}
+        };
+      } catch (err) {
+        setConnectionStatus(false);
+        setTimeout(connectWebSocket, 5000);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Background Polling
+    // ─────────────────────────────────────────────────────────────
+
+    function startBackgroundPolling() {
+      backgroundPollingInterval = setInterval(() => {
+        // Refresh data periodically even on non-active tabs
+        if (activeTab !== 'live') {
+          fetchStats();
+        }
+      }, 30000);
+    }
+
     async function fetchStats() {
       try {
         const response = await fetch('/api/stats');
-        if (response.ok) {
-          const stats = await response.json();
-          updateStats(stats);
+        const stats = await response.json();
+
+        // Update security badge
+        const badge = document.getElementById('securityBadge');
+        if (stats.pendingBlocks > 0) {
+          badge.textContent = stats.pendingBlocks;
+          badge.style.display = 'inline';
+        } else {
+          badge.style.display = 'none';
         }
       } catch (error) {
         console.error('Failed to fetch stats:', error);
       }
     }
 
-    // Fetch events from API
-    async function fetchEvents() {
-      try {
-        const response = await fetch('/api/events?limit=20');
-        if (response.ok) {
-          const events = await response.json();
-          updateActivity(events);
-        }
-      } catch (error) {
-        console.error('Failed to fetch events:', error);
+    // ─────────────────────────────────────────────────────────────
+    // Visibility API - pause polling when tab not visible
+    // ─────────────────────────────────────────────────────────────
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopLivePolling();
+      } else if (activeTab === 'live') {
+        startLivePolling();
       }
-    }
+    });
 
-    // Connect to WebSocket
-    function connectWebSocket() {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}`;
+    // ─────────────────────────────────────────────────────────────
+    // Init
+    // ─────────────────────────────────────────────────────────────
 
-      try {
-        ws = new WebSocket(wsUrl);
-
-        ws.onopen = function() {
-          setConnectionStatus(true);
-          if (reconnectTimeout) {
-            clearTimeout(reconnectTimeout);
-            reconnectTimeout = null;
-          }
-        };
-
-        ws.onmessage = function(event) {
-          try {
-            const message = JSON.parse(event.data);
-            if (message.type === 'stats') {
-              updateStats(message.data);
-            } else if (message.type === 'event') {
-              fetchEvents();
-              fetchStats();
-            } else if (message.type === 'block-approved' || message.type === 'block-denied') {
-              fetchStats();
-            }
-          } catch (error) {
-            console.error('Failed to parse WebSocket message:', error);
-          }
-        };
-
-        ws.onclose = function() {
-          setConnectionStatus(false);
-          ws = null;
-          // Attempt to reconnect after 5 seconds
-          reconnectTimeout = setTimeout(connectWebSocket, 5000);
-        };
-
-        ws.onerror = function() {
-          setConnectionStatus(false);
-        };
-      } catch (error) {
-        console.error('Failed to connect WebSocket:', error);
-        setConnectionStatus(false);
-        reconnectTimeout = setTimeout(connectWebSocket, 5000);
-      }
-    }
-
-    // Initialize dashboard
-    function init() {
-      fetchStats();
-      fetchEvents();
+    document.addEventListener('DOMContentLoaded', () => {
+      loadConfig();
       connectWebSocket();
-
-      // Auto-refresh every 30 seconds
-      setInterval(() => {
-        fetchStats();
-        fetchEvents();
-      }, 30000);
-    }
-
-    // Start when DOM is ready
-    document.addEventListener('DOMContentLoaded', init);
+      startLivePolling();
+      startBackgroundPolling();
+    });
   </script>
 </body>
 </html>

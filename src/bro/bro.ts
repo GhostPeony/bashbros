@@ -330,7 +330,31 @@ export class BashBro extends EventEmitter {
       return null
     }
 
-    return this.ollama.suggestCommand(context)
+    const startTime = Date.now()
+    try {
+      const result = await this.ollama.suggestCommand(context)
+      const latency = Date.now() - startTime
+
+      this.emit('bro:suggestion', {
+        input: context,
+        output: result ?? '',
+        model: this.ollama.getModel(),
+        latencyMs: latency,
+        success: result !== null
+      })
+
+      return result
+    } catch (error) {
+      const latency = Date.now() - startTime
+      this.emit('bro:suggestion', {
+        input: context,
+        output: '',
+        model: this.ollama?.getModel() ?? 'unknown',
+        latencyMs: latency,
+        success: false
+      })
+      return null
+    }
   }
 
   /**
@@ -341,7 +365,31 @@ export class BashBro extends EventEmitter {
       return 'Ollama not available for explanations.'
     }
 
-    return this.ollama.explainCommand(command)
+    const startTime = Date.now()
+    try {
+      const result = await this.ollama.explainCommand(command)
+      const latency = Date.now() - startTime
+
+      this.emit('bro:explanation', {
+        input: command,
+        output: result,
+        model: this.ollama.getModel(),
+        latencyMs: latency,
+        success: true
+      })
+
+      return result
+    } catch (error) {
+      const latency = Date.now() - startTime
+      this.emit('bro:explanation', {
+        input: command,
+        output: 'Could not explain command.',
+        model: this.ollama?.getModel() ?? 'unknown',
+        latencyMs: latency,
+        success: false
+      })
+      return 'Could not explain command.'
+    }
   }
 
   /**
@@ -352,7 +400,31 @@ export class BashBro extends EventEmitter {
       return null
     }
 
-    return this.ollama.fixCommand(command, error)
+    const startTime = Date.now()
+    try {
+      const result = await this.ollama.fixCommand(command, error)
+      const latency = Date.now() - startTime
+
+      this.emit('bro:fix', {
+        input: `${command} | Error: ${error}`,
+        output: result ?? '',
+        model: this.ollama.getModel(),
+        latencyMs: latency,
+        success: result !== null
+      })
+
+      return result
+    } catch (err) {
+      const latency = Date.now() - startTime
+      this.emit('bro:fix', {
+        input: `${command} | Error: ${error}`,
+        output: '',
+        model: this.ollama?.getModel() ?? 'unknown',
+        latencyMs: latency,
+        success: false
+      })
+      return null
+    }
   }
 
   /**
@@ -373,7 +445,32 @@ export class BashBro extends EventEmitter {
     }
 
     const shell = this.profile?.shell || 'bash'
-    return this.ollama.generateScript(description, shell)
+    const startTime = Date.now()
+
+    try {
+      const result = await this.ollama.generateScript(description, shell)
+      const latency = Date.now() - startTime
+
+      this.emit('bro:script', {
+        input: description,
+        output: result ?? '',
+        model: this.ollama.getModel(),
+        latencyMs: latency,
+        success: result !== null
+      })
+
+      return result
+    } catch (error) {
+      const latency = Date.now() - startTime
+      this.emit('bro:script', {
+        input: description,
+        output: '',
+        model: this.ollama?.getModel() ?? 'unknown',
+        latencyMs: latency,
+        success: false
+      })
+      return null
+    }
   }
 
   /**
@@ -394,7 +491,36 @@ export class BashBro extends EventEmitter {
       }
     }
 
-    return this.ollama.analyzeCommandSafety(command)
+    const startTime = Date.now()
+    try {
+      const result = await this.ollama.analyzeCommandSafety(command)
+      const latency = Date.now() - startTime
+
+      this.emit('bro:safety', {
+        input: command,
+        output: `Risk: ${result.risk} - ${result.explanation}`,
+        model: this.ollama.getModel(),
+        latencyMs: latency,
+        success: true
+      })
+
+      return result
+    } catch (error) {
+      const latency = Date.now() - startTime
+      this.emit('bro:safety', {
+        input: command,
+        output: 'Analysis failed',
+        model: this.ollama?.getModel() ?? 'unknown',
+        latencyMs: latency,
+        success: false
+      })
+      return {
+        safe: true,
+        risk: 'low',
+        explanation: 'Analysis unavailable.',
+        suggestions: []
+      }
+    }
   }
 
   /**

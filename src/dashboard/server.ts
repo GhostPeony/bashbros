@@ -8,7 +8,20 @@ import { WebSocketServer, type WebSocket } from 'ws'
 import { createServer, type Server } from 'http'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { homedir } from 'os'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { parse, stringify } from 'yaml'
 import { DashboardDB } from './db.js'
+import { findConfig } from '../config.js'
+
+// Default dashboard database path
+function getDefaultDbPath(): string {
+  const bashbrosDir = join(homedir(), '.bashbros')
+  if (!existsSync(bashbrosDir)) {
+    mkdirSync(bashbrosDir, { recursive: true })
+  }
+  return join(bashbrosDir, 'dashboard.db')
+}
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -36,7 +49,8 @@ export class DashboardServer {
   constructor(config: ServerConfig = {}) {
     this.port = config.port ?? 17800
     this.bind = config.bind ?? '127.0.0.1'
-    this.db = new DashboardDB(config.dbPath ?? ':memory:')
+    // Use persistent database path by default for shared access with watch mode
+    this.db = new DashboardDB(config.dbPath ?? getDefaultDbPath())
     this.app = express()
 
     this.setupMiddleware()
@@ -160,6 +174,255 @@ export class DashboardServer {
         res.json({ success: true })
       } catch (error) {
         res.status(500).json({ error: 'Failed to deny block' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Session Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // List sessions with pagination and filters
+    this.app.get('/api/sessions', (req: Request, res: Response) => {
+      try {
+        const filter: Record<string, unknown> = {}
+
+        if (req.query.status) filter.status = req.query.status
+        if (req.query.agent) filter.agent = req.query.agent
+        if (req.query.limit) filter.limit = parseInt(req.query.limit as string, 10)
+        if (req.query.offset) filter.offset = parseInt(req.query.offset as string, 10)
+        if (req.query.since) filter.since = new Date(req.query.since as string)
+        if (req.query.until) filter.until = new Date(req.query.until as string)
+
+        const sessions = this.db.getSessions(filter)
+        res.json(sessions)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch sessions' })
+      }
+    })
+
+    // Get active session
+    this.app.get('/api/sessions/active', (_req: Request, res: Response) => {
+      try {
+        const session = this.db.getActiveSession()
+        if (!session) {
+          res.json(null)
+          return
+        }
+        res.json(session)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch active session' })
+      }
+    })
+
+    // Get session details
+    this.app.get('/api/sessions/:id', (req: Request, res: Response) => {
+      try {
+        const session = this.db.getSession(req.params.id)
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' })
+          return
+        }
+        res.json(session)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch session' })
+      }
+    })
+
+    // Get commands for a session
+    this.app.get('/api/sessions/:id/commands', (req: Request, res: Response) => {
+      try {
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100
+        const commands = this.db.getCommandsBySession(req.params.id, limit)
+        res.json(commands)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch session commands' })
+      }
+    })
+
+    // Get session metrics
+    this.app.get('/api/sessions/:id/metrics', (req: Request, res: Response) => {
+      try {
+        const session = this.db.getSession(req.params.id)
+        if (!session) {
+          res.status(404).json({ error: 'Session not found' })
+          return
+        }
+        const metrics = this.db.getSessionMetrics(req.params.id)
+        res.json(metrics)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch session metrics' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Command Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // Get live commands (most recent)
+    this.app.get('/api/commands/live', (req: Request, res: Response) => {
+      try {
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20
+        const commands = this.db.getLiveCommands(limit)
+        res.json(commands)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch live commands' })
+      }
+    })
+
+    // Get commands with incremental fetch support
+    this.app.get('/api/commands', (req: Request, res: Response) => {
+      try {
+        const filter: Record<string, unknown> = {}
+
+        if (req.query.sessionId) filter.sessionId = req.query.sessionId
+        if (req.query.allowed !== undefined) filter.allowed = req.query.allowed === 'true'
+        if (req.query.riskLevel) filter.riskLevel = req.query.riskLevel
+        if (req.query.afterId) filter.afterId = req.query.afterId
+        if (req.query.since) filter.since = new Date(req.query.since as string)
+        if (req.query.limit) filter.limit = parseInt(req.query.limit as string, 10)
+        if (req.query.offset) filter.offset = parseInt(req.query.offset as string, 10)
+
+        const commands = this.db.getCommands(filter)
+        res.json(commands)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch commands' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Bash Bro Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // Get Bash Bro status
+    this.app.get('/api/bro/status', (_req: Request, res: Response) => {
+      try {
+        const status = this.db.getLatestBroStatus()
+        res.json(status)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch Bro status' })
+      }
+    })
+
+    // Get Bash Bro events
+    this.app.get('/api/bro/events', (req: Request, res: Response) => {
+      try {
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100
+        const sessionId = req.query.sessionId as string | undefined
+        const events = this.db.getBroEvents(limit, sessionId)
+        res.json(events)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch Bro events' })
+      }
+    })
+
+    // Get available Ollama models
+    this.app.get('/api/bro/models', async (_req: Request, res: Response) => {
+      try {
+        // Try to fetch models from Ollama
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+
+        const response = await fetch('http://localhost:11434/api/tags', {
+          signal: controller.signal
+        })
+
+        clearTimeout(timeout)
+
+        if (!response.ok) {
+          res.json({ available: false, models: [] })
+          return
+        }
+
+        const data = await response.json() as { models?: { name: string }[] }
+        const models = data.models?.map((m) => m.name) || []
+        res.json({ available: true, models })
+      } catch (error) {
+        res.json({ available: false, models: [] })
+      }
+    })
+
+    // Change Ollama model (writes to a control file that watch mode can pick up)
+    this.app.post('/api/bro/model', (req: Request, res: Response) => {
+      try {
+        const { model } = req.body
+        if (!model) {
+          res.status(400).json({ error: 'Model name required' })
+          return
+        }
+
+        // Write to control file in .bashbros directory
+        const controlPath = join(homedir(), '.bashbros', 'model-control.json')
+        writeFileSync(controlPath, JSON.stringify({
+          model,
+          timestamp: new Date().toISOString()
+        }), 'utf-8')
+
+        res.json({ success: true, model })
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to change model' })
+      }
+    })
+
+    // Trigger system scan (writes control file)
+    this.app.post('/api/bro/scan', (_req: Request, res: Response) => {
+      try {
+        const controlPath = join(homedir(), '.bashbros', 'scan-control.json')
+        writeFileSync(controlPath, JSON.stringify({
+          action: 'scan',
+          timestamp: new Date().toISOString()
+        }), 'utf-8')
+
+        res.json({ success: true, message: 'Scan requested' })
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to trigger scan' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Exposure Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // Get recent exposures
+    this.app.get('/api/exposures', (req: Request, res: Response) => {
+      try {
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100
+        const exposures = this.db.getRecentExposures(limit)
+        res.json(exposures)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch exposures' })
+      }
+    })
+
+    // Get config
+    this.app.get('/api/config', (_req: Request, res: Response) => {
+      try {
+        const configPath = findConfig()
+        if (!configPath) {
+          res.status(404).json({ error: 'No config file found' })
+          return
+        }
+        const content = readFileSync(configPath, 'utf-8')
+        const config = parse(content)
+        res.json(config)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to load config' })
+      }
+    })
+
+    // Save config
+    this.app.post('/api/config', (req: Request, res: Response) => {
+      try {
+        const configPath = findConfig()
+        if (!configPath) {
+          res.status(404).json({ error: 'No config file found' })
+          return
+        }
+        const config = req.body
+        const content = stringify(config)
+        writeFileSync(configPath, content, 'utf-8')
+        res.json({ success: true })
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to save config' })
       }
     })
 

@@ -60,6 +60,118 @@ export interface DashboardStats {
   pendingBlocks: number
   connectorCount: number
   recentExposures: number
+  // Enhanced stats
+  activeSessions: number
+  todayCommands: number
+  todayViolations: number
+  avgRiskScore24h: number
+  ollamaStatus: 'connected' | 'disconnected' | 'unknown'
+}
+
+// ─────────────────────────────────────────────────────────────
+// Session & Command Types
+// ─────────────────────────────────────────────────────────────
+
+export interface SessionRecord {
+  id: string
+  agent: string
+  pid: number
+  startTime: Date
+  endTime?: Date
+  status: 'active' | 'completed' | 'crashed'
+  commandCount: number
+  blockedCount: number
+  avgRiskScore: number
+  workingDir: string
+}
+
+export interface CommandRecord {
+  id: string
+  sessionId: string
+  timestamp: Date
+  command: string
+  allowed: boolean
+  riskScore: number
+  riskLevel: 'safe' | 'caution' | 'dangerous' | 'critical'
+  riskFactors: string[]
+  durationMs: number
+  violations: string[]
+}
+
+export interface BroEventRecord {
+  id: string
+  sessionId: string | null
+  timestamp: Date
+  eventType: string
+  inputContext: string
+  outputSummary: string
+  modelUsed: string
+  latencyMs: number
+  success: boolean
+}
+
+export interface BroStatusRecord {
+  id: string
+  timestamp: Date
+  ollamaAvailable: boolean
+  ollamaModel: string
+  platform: string
+  shell: string
+  projectType: string | null
+}
+
+export interface InsertSessionInput {
+  agent: string
+  pid: number
+  workingDir: string
+}
+
+export interface InsertCommandInput {
+  sessionId: string
+  command: string
+  allowed: boolean
+  riskScore: number
+  riskLevel: 'safe' | 'caution' | 'dangerous' | 'critical'
+  riskFactors: string[]
+  durationMs: number
+  violations: string[]
+}
+
+export interface InsertBroEventInput {
+  sessionId?: string
+  eventType: string
+  inputContext: string
+  outputSummary: string
+  modelUsed: string
+  latencyMs: number
+  success: boolean
+}
+
+export interface InsertBroStatusInput {
+  ollamaAvailable: boolean
+  ollamaModel: string
+  platform: string
+  shell: string
+  projectType?: string
+}
+
+export interface SessionFilter {
+  status?: 'active' | 'completed' | 'crashed'
+  since?: Date
+  until?: Date
+  agent?: string
+  limit?: number
+  offset?: number
+}
+
+export interface CommandFilter {
+  sessionId?: string
+  allowed?: boolean
+  riskLevel?: string
+  since?: Date
+  afterId?: string
+  limit?: number
+  offset?: number
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -141,6 +253,80 @@ export class DashboardDB {
       CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_connector_events_connector ON connector_events(connector);
       CREATE INDEX IF NOT EXISTS idx_egress_blocks_status ON egress_blocks(status);
+    `)
+
+    // Sessions table - track watch sessions
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        agent TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        command_count INTEGER NOT NULL DEFAULT 0,
+        blocked_count INTEGER NOT NULL DEFAULT 0,
+        avg_risk_score REAL NOT NULL DEFAULT 0,
+        working_dir TEXT NOT NULL
+      )
+    `)
+
+    // Commands table - detailed command history
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS commands (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        command TEXT NOT NULL,
+        allowed INTEGER NOT NULL,
+        risk_score INTEGER NOT NULL,
+        risk_level TEXT NOT NULL,
+        risk_factors TEXT NOT NULL,
+        duration_ms INTEGER NOT NULL,
+        violations TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      )
+    `)
+
+    // Bash Bro events table - AI activity log
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bro_events (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        timestamp TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        input_context TEXT NOT NULL,
+        output_summary TEXT NOT NULL,
+        model_used TEXT NOT NULL,
+        latency_ms INTEGER NOT NULL,
+        success INTEGER NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      )
+    `)
+
+    // Bash Bro status snapshots table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bro_status (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        ollama_available INTEGER NOT NULL,
+        ollama_model TEXT NOT NULL,
+        platform TEXT NOT NULL,
+        shell TEXT NOT NULL,
+        project_type TEXT
+      )
+    `)
+
+    // Create indexes for new tables
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+      CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time);
+      CREATE INDEX IF NOT EXISTS idx_commands_session_id ON commands(session_id);
+      CREATE INDEX IF NOT EXISTS idx_commands_timestamp ON commands(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_commands_allowed ON commands(allowed);
+      CREATE INDEX IF NOT EXISTS idx_bro_events_session_id ON bro_events(session_id);
+      CREATE INDEX IF NOT EXISTS idx_bro_events_timestamp ON bro_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_bro_status_timestamp ON bro_status(timestamp);
     `)
   }
 
@@ -482,6 +668,498 @@ export class DashboardDB {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Sessions
+  // ─────────────────────────────────────────────────────────────
+
+  insertSession(input: InsertSessionInput): string {
+    const id = randomUUID()
+    const startTime = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT INTO sessions (id, agent, pid, start_time, status, command_count, blocked_count, avg_risk_score, working_dir)
+      VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?)
+    `)
+
+    stmt.run(id, input.agent, input.pid, startTime, input.workingDir)
+    return id
+  }
+
+  updateSession(id: string, updates: {
+    endTime?: Date
+    status?: 'active' | 'completed' | 'crashed'
+    commandCount?: number
+    blockedCount?: number
+    avgRiskScore?: number
+  }): void {
+    const setClauses: string[] = []
+    const params: unknown[] = []
+
+    if (updates.endTime !== undefined) {
+      setClauses.push('end_time = ?')
+      params.push(updates.endTime.toISOString())
+    }
+    if (updates.status !== undefined) {
+      setClauses.push('status = ?')
+      params.push(updates.status)
+    }
+    if (updates.commandCount !== undefined) {
+      setClauses.push('command_count = ?')
+      params.push(updates.commandCount)
+    }
+    if (updates.blockedCount !== undefined) {
+      setClauses.push('blocked_count = ?')
+      params.push(updates.blockedCount)
+    }
+    if (updates.avgRiskScore !== undefined) {
+      setClauses.push('avg_risk_score = ?')
+      params.push(updates.avgRiskScore)
+    }
+
+    if (setClauses.length === 0) return
+
+    params.push(id)
+    const stmt = this.db.prepare(`
+      UPDATE sessions SET ${setClauses.join(', ')} WHERE id = ?
+    `)
+    stmt.run(...params)
+  }
+
+  getSession(id: string): SessionRecord | null {
+    const stmt = this.db.prepare('SELECT * FROM sessions WHERE id = ?')
+    const row = stmt.get(id) as {
+      id: string
+      agent: string
+      pid: number
+      start_time: string
+      end_time: string | null
+      status: 'active' | 'completed' | 'crashed'
+      command_count: number
+      blocked_count: number
+      avg_risk_score: number
+      working_dir: string
+    } | undefined
+
+    if (!row) return null
+    return this.rowToSession(row)
+  }
+
+  getSessions(filter: SessionFilter = {}): SessionRecord[] {
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (filter.status) {
+      conditions.push('status = ?')
+      params.push(filter.status)
+    }
+    if (filter.since) {
+      conditions.push('start_time >= ?')
+      params.push(filter.since.toISOString())
+    }
+    if (filter.until) {
+      conditions.push('start_time <= ?')
+      params.push(filter.until.toISOString())
+    }
+    if (filter.agent) {
+      conditions.push('agent = ?')
+      params.push(filter.agent)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const limit = filter.limit ?? 100
+    const offset = filter.offset ?? 0
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM sessions
+      ${whereClause}
+      ORDER BY start_time DESC
+      LIMIT ? OFFSET ?
+    `)
+
+    params.push(limit, offset)
+    const rows = stmt.all(...params) as Array<{
+      id: string
+      agent: string
+      pid: number
+      start_time: string
+      end_time: string | null
+      status: 'active' | 'completed' | 'crashed'
+      command_count: number
+      blocked_count: number
+      avg_risk_score: number
+      working_dir: string
+    }>
+
+    return rows.map(row => this.rowToSession(row))
+  }
+
+  getActiveSession(): SessionRecord | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM sessions WHERE status = 'active' ORDER BY start_time DESC LIMIT 1
+    `)
+    const row = stmt.get() as {
+      id: string
+      agent: string
+      pid: number
+      start_time: string
+      end_time: string | null
+      status: 'active' | 'completed' | 'crashed'
+      command_count: number
+      blocked_count: number
+      avg_risk_score: number
+      working_dir: string
+    } | undefined
+
+    if (!row) return null
+    return this.rowToSession(row)
+  }
+
+  private rowToSession(row: {
+    id: string
+    agent: string
+    pid: number
+    start_time: string
+    end_time: string | null
+    status: 'active' | 'completed' | 'crashed'
+    command_count: number
+    blocked_count: number
+    avg_risk_score: number
+    working_dir: string
+  }): SessionRecord {
+    return {
+      id: row.id,
+      agent: row.agent,
+      pid: row.pid,
+      startTime: new Date(row.start_time),
+      endTime: row.end_time ? new Date(row.end_time) : undefined,
+      status: row.status,
+      commandCount: row.command_count,
+      blockedCount: row.blocked_count,
+      avgRiskScore: row.avg_risk_score,
+      workingDir: row.working_dir
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Commands
+  // ─────────────────────────────────────────────────────────────
+
+  insertCommand(input: InsertCommandInput): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT INTO commands (id, session_id, timestamp, command, allowed, risk_score, risk_level, risk_factors, duration_ms, violations)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    stmt.run(
+      id,
+      input.sessionId,
+      timestamp,
+      input.command,
+      input.allowed ? 1 : 0,
+      input.riskScore,
+      input.riskLevel,
+      JSON.stringify(input.riskFactors),
+      input.durationMs,
+      JSON.stringify(input.violations)
+    )
+
+    return id
+  }
+
+  getCommands(filter: CommandFilter = {}): CommandRecord[] {
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (filter.sessionId) {
+      conditions.push('session_id = ?')
+      params.push(filter.sessionId)
+    }
+    if (filter.allowed !== undefined) {
+      conditions.push('allowed = ?')
+      params.push(filter.allowed ? 1 : 0)
+    }
+    if (filter.riskLevel) {
+      conditions.push('risk_level = ?')
+      params.push(filter.riskLevel)
+    }
+    if (filter.since) {
+      conditions.push('timestamp >= ?')
+      params.push(filter.since.toISOString())
+    }
+    if (filter.afterId) {
+      conditions.push('id > ?')
+      params.push(filter.afterId)
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const limit = filter.limit ?? 100
+    const offset = filter.offset ?? 0
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM commands
+      ${whereClause}
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `)
+
+    params.push(limit, offset)
+    const rows = stmt.all(...params) as Array<{
+      id: string
+      session_id: string
+      timestamp: string
+      command: string
+      allowed: number
+      risk_score: number
+      risk_level: 'safe' | 'caution' | 'dangerous' | 'critical'
+      risk_factors: string
+      duration_ms: number
+      violations: string
+    }>
+
+    return rows.map(row => this.rowToCommand(row))
+  }
+
+  getCommandsBySession(sessionId: string, limit: number = 100): CommandRecord[] {
+    return this.getCommands({ sessionId, limit })
+  }
+
+  getLiveCommands(limit: number = 20): CommandRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM commands
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `)
+
+    const rows = stmt.all(limit) as Array<{
+      id: string
+      session_id: string
+      timestamp: string
+      command: string
+      allowed: number
+      risk_score: number
+      risk_level: 'safe' | 'caution' | 'dangerous' | 'critical'
+      risk_factors: string
+      duration_ms: number
+      violations: string
+    }>
+
+    return rows.map(row => this.rowToCommand(row))
+  }
+
+  private rowToCommand(row: {
+    id: string
+    session_id: string
+    timestamp: string
+    command: string
+    allowed: number
+    risk_score: number
+    risk_level: 'safe' | 'caution' | 'dangerous' | 'critical'
+    risk_factors: string
+    duration_ms: number
+    violations: string
+  }): CommandRecord {
+    return {
+      id: row.id,
+      sessionId: row.session_id,
+      timestamp: new Date(row.timestamp),
+      command: row.command,
+      allowed: row.allowed === 1,
+      riskScore: row.risk_score,
+      riskLevel: row.risk_level,
+      riskFactors: JSON.parse(row.risk_factors),
+      durationMs: row.duration_ms,
+      violations: JSON.parse(row.violations)
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Bro Events
+  // ─────────────────────────────────────────────────────────────
+
+  insertBroEvent(input: InsertBroEventInput): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT INTO bro_events (id, session_id, timestamp, event_type, input_context, output_summary, model_used, latency_ms, success)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    stmt.run(
+      id,
+      input.sessionId ?? null,
+      timestamp,
+      input.eventType,
+      input.inputContext,
+      input.outputSummary,
+      input.modelUsed,
+      input.latencyMs,
+      input.success ? 1 : 0
+    )
+
+    return id
+  }
+
+  getBroEvents(limit: number = 100, sessionId?: string): BroEventRecord[] {
+    let stmt
+    let rows
+
+    if (sessionId) {
+      stmt = this.db.prepare(`
+        SELECT * FROM bro_events
+        WHERE session_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+      `)
+      rows = stmt.all(sessionId, limit)
+    } else {
+      stmt = this.db.prepare(`
+        SELECT * FROM bro_events
+        ORDER BY timestamp DESC
+        LIMIT ?
+      `)
+      rows = stmt.all(limit)
+    }
+
+    return (rows as Array<{
+      id: string
+      session_id: string | null
+      timestamp: string
+      event_type: string
+      input_context: string
+      output_summary: string
+      model_used: string
+      latency_ms: number
+      success: number
+    }>).map(row => ({
+      id: row.id,
+      sessionId: row.session_id,
+      timestamp: new Date(row.timestamp),
+      eventType: row.event_type,
+      inputContext: row.input_context,
+      outputSummary: row.output_summary,
+      modelUsed: row.model_used,
+      latencyMs: row.latency_ms,
+      success: row.success === 1
+    }))
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Bro Status
+  // ─────────────────────────────────────────────────────────────
+
+  updateBroStatus(input: InsertBroStatusInput): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT INTO bro_status (id, timestamp, ollama_available, ollama_model, platform, shell, project_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    stmt.run(
+      id,
+      timestamp,
+      input.ollamaAvailable ? 1 : 0,
+      input.ollamaModel,
+      input.platform,
+      input.shell,
+      input.projectType ?? null
+    )
+
+    return id
+  }
+
+  getLatestBroStatus(): BroStatusRecord | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM bro_status
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `)
+
+    const row = stmt.get() as {
+      id: string
+      timestamp: string
+      ollama_available: number
+      ollama_model: string
+      platform: string
+      shell: string
+      project_type: string | null
+    } | undefined
+
+    if (!row) return null
+
+    return {
+      id: row.id,
+      timestamp: new Date(row.timestamp),
+      ollamaAvailable: row.ollama_available === 1,
+      ollamaModel: row.ollama_model,
+      platform: row.platform,
+      shell: row.shell,
+      projectType: row.project_type
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Session Metrics
+  // ─────────────────────────────────────────────────────────────
+
+  getSessionMetrics(sessionId: string): {
+    totalCommands: number
+    allowedCommands: number
+    blockedCommands: number
+    avgRiskScore: number
+    riskDistribution: Record<string, number>
+    topCommands: Array<{ command: string; count: number }>
+  } {
+    // Total commands
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE session_id = ?
+    `).get(sessionId) as { count: number }
+
+    // Allowed/blocked counts
+    const allowedRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE session_id = ? AND allowed = 1
+    `).get(sessionId) as { count: number }
+
+    const blockedRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE session_id = ? AND allowed = 0
+    `).get(sessionId) as { count: number }
+
+    // Average risk score
+    const avgRow = this.db.prepare(`
+      SELECT AVG(risk_score) as avg FROM commands WHERE session_id = ?
+    `).get(sessionId) as { avg: number | null }
+
+    // Risk distribution
+    const riskRows = this.db.prepare(`
+      SELECT risk_level, COUNT(*) as count FROM commands WHERE session_id = ? GROUP BY risk_level
+    `).all(sessionId) as Array<{ risk_level: string; count: number }>
+
+    const riskDistribution: Record<string, number> = {}
+    for (const row of riskRows) {
+      riskDistribution[row.risk_level] = row.count
+    }
+
+    // Top commands (by base command, first word)
+    const cmdRows = this.db.prepare(`
+      SELECT command, COUNT(*) as count FROM commands WHERE session_id = ?
+      GROUP BY command ORDER BY count DESC LIMIT 10
+    `).all(sessionId) as Array<{ command: string; count: number }>
+
+    return {
+      totalCommands: totalRow.count,
+      allowedCommands: allowedRow.count,
+      blockedCommands: blockedRow.count,
+      avgRiskScore: avgRow.avg ?? 0,
+      riskDistribution,
+      topCommands: cmdRows
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Stats
   // ─────────────────────────────────────────────────────────────
 
@@ -525,13 +1203,47 @@ export class DashboardDB {
       SELECT COUNT(*) as count FROM exposure_scans WHERE timestamp >= ?
     `).get(oneDayAgo) as { count: number }
 
+    // Active sessions
+    const activeSessionsRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM sessions WHERE status = 'active'
+    `).get() as { count: number }
+
+    // Today's commands
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+    const todayCommandsRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE timestamp >= ?
+    `).get(todayStart.toISOString()) as { count: number }
+
+    // Today's violations (blocked commands)
+    const todayViolationsRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE timestamp >= ? AND allowed = 0
+    `).get(todayStart.toISOString()) as { count: number }
+
+    // Average risk score in last 24 hours
+    const avgRiskRow = this.db.prepare(`
+      SELECT AVG(risk_score) as avg FROM commands WHERE timestamp >= ?
+    `).get(oneDayAgo) as { avg: number | null }
+
+    // Ollama status from latest bro_status
+    const latestStatus = this.getLatestBroStatus()
+    let ollamaStatus: 'connected' | 'disconnected' | 'unknown' = 'unknown'
+    if (latestStatus) {
+      ollamaStatus = latestStatus.ollamaAvailable ? 'connected' : 'disconnected'
+    }
+
     return {
       totalEvents: totalEventsRow.count,
       eventsBySource,
       eventsByLevel,
       pendingBlocks: pendingBlocksRow.count,
       connectorCount: connectorCountRow.count,
-      recentExposures: recentExposuresRow.count
+      recentExposures: recentExposuresRow.count,
+      activeSessions: activeSessionsRow.count,
+      todayCommands: todayCommandsRow.count,
+      todayViolations: todayViolationsRow.count,
+      avgRiskScore24h: avgRiskRow.avg ?? 0,
+      ollamaStatus
     }
   }
 
@@ -549,7 +1261,16 @@ export class DashboardDB {
     `).run(cutoff).changes
     const exposuresDeleted = this.db.prepare('DELETE FROM exposure_scans WHERE timestamp < ?').run(cutoff).changes
 
-    return eventsDeleted + connectorDeleted + blocksDeleted + exposuresDeleted
+    // Cleanup new tables - commands first (due to foreign key), then sessions
+    const commandsDeleted = this.db.prepare('DELETE FROM commands WHERE timestamp < ?').run(cutoff).changes
+    const sessionsDeleted = this.db.prepare(`
+      DELETE FROM sessions WHERE start_time < ? AND status != 'active'
+    `).run(cutoff).changes
+    const broEventsDeleted = this.db.prepare('DELETE FROM bro_events WHERE timestamp < ?').run(cutoff).changes
+    const broStatusDeleted = this.db.prepare('DELETE FROM bro_status WHERE timestamp < ?').run(cutoff).changes
+
+    return eventsDeleted + connectorDeleted + blocksDeleted + exposuresDeleted +
+           commandsDeleted + sessionsDeleted + broEventsDeleted + broStatusDeleted
   }
 
   close(): void {
