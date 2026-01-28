@@ -120,6 +120,19 @@ export interface BroStatusRecord {
   projectType: string | null
 }
 
+export interface ToolUseRecord {
+  id: string
+  timestamp: Date
+  toolName: string
+  toolInput: string
+  toolOutput: string
+  exitCode: number | null
+  success: boolean | null
+  cwd: string
+  repoName: string | null
+  repoPath: string | null
+}
+
 export interface InsertSessionInput {
   agent: string
   pid: number
@@ -153,6 +166,24 @@ export interface InsertBroStatusInput {
   platform: string
   shell: string
   projectType?: string
+}
+
+export interface InsertToolUseInput {
+  toolName: string
+  toolInput: string
+  toolOutput: string
+  exitCode?: number | null
+  success?: boolean | null
+  cwd: string
+  repoName?: string | null
+  repoPath?: string | null
+}
+
+export interface ToolUseFilter {
+  toolName?: string
+  since?: Date
+  limit?: number
+  offset?: number
 }
 
 export interface SessionFilter {
@@ -317,6 +348,22 @@ export class DashboardDB {
       )
     `)
 
+    // Tool uses table - generic Claude Code tool tracking
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tool_uses (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        tool_input TEXT NOT NULL,
+        tool_output TEXT NOT NULL,
+        exit_code INTEGER,
+        success INTEGER,
+        cwd TEXT NOT NULL,
+        repo_name TEXT,
+        repo_path TEXT
+      )
+    `)
+
     // Create indexes for new tables
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -327,6 +374,8 @@ export class DashboardDB {
       CREATE INDEX IF NOT EXISTS idx_bro_events_session_id ON bro_events(session_id);
       CREATE INDEX IF NOT EXISTS idx_bro_events_timestamp ON bro_events(timestamp);
       CREATE INDEX IF NOT EXISTS idx_bro_status_timestamp ON bro_status(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_tool_uses_timestamp ON tool_uses(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_tool_uses_tool_name ON tool_uses(tool_name);
     `)
   }
 
@@ -1103,6 +1152,119 @@ export class DashboardDB {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Tool Uses
+  // ─────────────────────────────────────────────────────────────
+
+  insertToolUse(input: InsertToolUseInput): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT INTO tool_uses (id, timestamp, tool_name, tool_input, tool_output, exit_code, success, cwd, repo_name, repo_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    stmt.run(
+      id,
+      timestamp,
+      input.toolName,
+      input.toolInput.substring(0, 50000), // Truncate very long inputs
+      input.toolOutput.substring(0, 50000), // Truncate very long outputs
+      input.exitCode ?? null,
+      input.success === undefined ? null : (input.success ? 1 : 0),
+      input.cwd,
+      input.repoName ?? null,
+      input.repoPath ?? null
+    )
+
+    return id
+  }
+
+  getToolUses(filter: ToolUseFilter = {}): ToolUseRecord[] {
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (filter.toolName) {
+      conditions.push('tool_name = ?')
+      params.push(filter.toolName)
+    }
+    if (filter.since) {
+      conditions.push('timestamp >= ?')
+      params.push(filter.since.toISOString())
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const limit = filter.limit ?? 100
+    const offset = filter.offset ?? 0
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM tool_uses
+      ${whereClause}
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `)
+
+    params.push(limit, offset)
+    const rows = stmt.all(...params) as Array<{
+      id: string
+      timestamp: string
+      tool_name: string
+      tool_input: string
+      tool_output: string
+      exit_code: number | null
+      success: number | null
+      cwd: string
+      repo_name: string | null
+      repo_path: string | null
+    }>
+
+    return rows.map(row => ({
+      id: row.id,
+      timestamp: new Date(row.timestamp),
+      toolName: row.tool_name,
+      toolInput: row.tool_input,
+      toolOutput: row.tool_output,
+      exitCode: row.exit_code,
+      success: row.success === null ? null : row.success === 1,
+      cwd: row.cwd,
+      repoName: row.repo_name,
+      repoPath: row.repo_path
+    }))
+  }
+
+  getLiveToolUses(limit: number = 50): ToolUseRecord[] {
+    return this.getToolUses({ limit })
+  }
+
+  getToolUseStats(): {
+    totalUses: number
+    byTool: Record<string, number>
+    last24h: number
+  } {
+    const totalRow = this.db.prepare('SELECT COUNT(*) as count FROM tool_uses').get() as { count: number }
+
+    const toolRows = this.db.prepare(`
+      SELECT tool_name, COUNT(*) as count FROM tool_uses GROUP BY tool_name ORDER BY count DESC
+    `).all() as Array<{ tool_name: string; count: number }>
+
+    const byTool: Record<string, number> = {}
+    for (const row of toolRows) {
+      byTool[row.tool_name] = row.count
+    }
+
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const last24hRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM tool_uses WHERE timestamp >= ?
+    `).get(oneDayAgo) as { count: number }
+
+    return {
+      totalUses: totalRow.count,
+      byTool,
+      last24h: last24hRow.count
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Session Metrics
   // ─────────────────────────────────────────────────────────────
 
@@ -1268,9 +1430,10 @@ export class DashboardDB {
     `).run(cutoff).changes
     const broEventsDeleted = this.db.prepare('DELETE FROM bro_events WHERE timestamp < ?').run(cutoff).changes
     const broStatusDeleted = this.db.prepare('DELETE FROM bro_status WHERE timestamp < ?').run(cutoff).changes
+    const toolUsesDeleted = this.db.prepare('DELETE FROM tool_uses WHERE timestamp < ?').run(cutoff).changes
 
     return eventsDeleted + connectorDeleted + blocksDeleted + exposuresDeleted +
-           commandsDeleted + sessionsDeleted + broEventsDeleted + broStatusDeleted
+           commandsDeleted + sessionsDeleted + broEventsDeleted + broStatusDeleted + toolUsesDeleted
   }
 
   close(): void {

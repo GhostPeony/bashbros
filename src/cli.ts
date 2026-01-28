@@ -488,10 +488,37 @@ hookCmd
     console.log()
     console.log(`  Claude Code: ${status.claudeInstalled ? chalk.green('installed') : chalk.yellow('not found')}`)
     console.log(`  BashBros hooks: ${status.hooksInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    console.log(`  All-tools recording: ${status.allToolsInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
     if (status.hooks.length > 0) {
       console.log(`  Active hooks: ${status.hooks.join(', ')}`)
     }
     console.log()
+  })
+
+hookCmd
+  .command('install-all-tools')
+  .description('Install hook to record ALL Claude Code tool uses (not just Bash)')
+  .action(() => {
+    const result = ClaudeCodeHooks.installAllTools()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+hookCmd
+  .command('uninstall-all-tools')
+  .description('Remove all-tools recording hook')
+  .action(() => {
+    const result = ClaudeCodeHooks.uninstallAllTools()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
   })
 
 // ─────────────────────────────────────────────────────────────
@@ -707,16 +734,170 @@ program
 program
   .command('gate <command>')
   .description('Check if a command should be allowed (used by hooks)')
-  .action(async (command) => {
+  .option('-y, --yes', 'Skip interactive prompt and block')
+  .action(async (command, options) => {
     const result = await gateCommand(command)
 
     if (!result.allowed) {
-      console.error(`BLOCKED: ${result.reason}`)
-      process.exit(2)  // Non-zero to block in Claude Code
+      // If stdin is a TTY and not skipping prompt, ask user
+      if (process.stdin.isTTY && !options.yes) {
+        const { allowForSession } = await import('./session.js')
+        const { readFileSync, writeFileSync } = await import('fs')
+        const { parse, stringify } = await import('yaml')
+        const { findConfig } = await import('./config.js')
+
+        console.error()
+        console.error(chalk.red('🛡️  BashBros blocked a command'))
+        console.error()
+        console.error(chalk.dim('  Command:'), command)
+        console.error(chalk.dim('  Reason:'), result.reason)
+        console.error()
+        console.error(chalk.yellow('  Allow this command?'))
+        console.error(chalk.cyan('    [y]'), 'Allow once')
+        console.error(chalk.cyan('    [s]'), 'Allow for session')
+        console.error(chalk.cyan('    [p]'), 'Allow permanently')
+        console.error(chalk.cyan('    [n]'), 'Block (default)')
+        process.stderr.write(chalk.dim('\n  Choice: '))
+
+        // Read single character from stdin
+        const choice = await new Promise<string>((resolve) => {
+          if (process.stdin.isTTY) {
+            process.stdin.setRawMode(true)
+          }
+          process.stdin.resume()
+          process.stdin.once('data', (data) => {
+            if (process.stdin.isTTY) {
+              process.stdin.setRawMode(false)
+            }
+            const char = data.toString().toLowerCase()
+            console.error(char)
+            resolve(char)
+          })
+        })
+
+        switch (choice) {
+          case 'y':
+            console.error(chalk.green('  ✓ Allowed once'))
+            process.exit(0)
+            break
+
+          case 's':
+            allowForSession(command)
+            console.error(chalk.green('  ✓ Allowed for session'))
+            process.exit(0)
+            break
+
+          case 'p':
+            try {
+              const configPath = findConfig()
+              if (configPath) {
+                const content = readFileSync(configPath, 'utf-8')
+                const config = parse(content)
+                if (!config.commands) config.commands = { allow: [], block: [] }
+                if (!config.commands.allow) config.commands.allow = []
+                if (!config.commands.allow.includes(command)) {
+                  config.commands.allow.push(command)
+                  writeFileSync(configPath, stringify(config))
+                }
+                console.error(chalk.green('  ✓ Added to allowlist permanently'))
+                process.exit(0)
+              }
+            } catch {
+              console.error(chalk.red('  ✗ Failed to update config'))
+            }
+            process.exit(2)
+            break
+
+          default:
+            console.error(chalk.yellow('  ✗ Blocked'))
+            process.exit(2)
+        }
+      } else {
+        // Clean, minimal output for non-interactive use (hooks)
+        console.error(`Blocked: ${result.reason}`)
+        process.exit(2)
+      }
     }
 
     // Silently allow
     process.exit(0)
+  })
+
+program
+  .command('record-tool')
+  .description('Record a Claude Code tool execution (used by hooks)')
+  .option('--marker <marker>', 'Hook marker (ignored, used for identification)')
+  .action(async () => {
+    // Read JSON from CLAUDE_HOOK_EVENT environment variable
+    const eventJson = process.env.CLAUDE_HOOK_EVENT || ''
+
+    if (!eventJson) {
+      // Silent exit - no event data
+      return
+    }
+
+    try {
+      const event = JSON.parse(eventJson)
+      const events = Array.isArray(event) ? event : [event]
+
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+
+      for (const evt of events) {
+        const toolName = evt.tool_name || evt.tool || 'unknown'
+        const toolInput = evt.tool_input || evt.input || {}
+        const toolOutput = evt.tool_output || evt.output || ''
+
+        // Extract command/input based on tool type
+        let inputStr: string
+        if (typeof toolInput === 'string') {
+          inputStr = toolInput
+        } else if (typeof toolInput === 'object') {
+          inputStr = JSON.stringify(toolInput, null, 2)
+        } else {
+          inputStr = String(toolInput)
+        }
+
+        // Extract output
+        let outputStr: string
+        let exitCode: number | null = null
+        let success: boolean | null = null
+
+        if (typeof toolOutput === 'object' && toolOutput !== null) {
+          outputStr = (toolOutput.stdout || '') + (toolOutput.stderr || '')
+          exitCode = toolOutput.exit_code ?? toolOutput.exitCode ?? null
+          if (exitCode !== null) {
+            success = exitCode === 0
+          }
+        } else {
+          outputStr = String(toolOutput || '')
+        }
+
+        // Get repo info if available
+        const repoName = evt.repo?.name ?? null
+        const repoPath = evt.repo?.path ?? null
+
+        writer.recordToolUse({
+          toolName,
+          toolInput: inputStr,
+          toolOutput: outputStr,
+          exitCode,
+          success,
+          cwd: evt.cwd || process.cwd(),
+          repoName,
+          repoPath
+        })
+
+        // Minimal output for hook
+        const preview = inputStr.substring(0, 40).replace(/\n/g, ' ')
+        console.log(`[BashBros] ${toolName}: ${preview}${inputStr.length > 40 ? '...' : ''}`)
+      }
+
+      writer.close()
+    } catch (e) {
+      // Silent fail for hooks
+      console.error(`[BashBros] Error recording tool: ${e instanceof Error ? e.message : e}`)
+    }
   })
 
 program

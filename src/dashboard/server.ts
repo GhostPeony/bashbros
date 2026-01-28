@@ -290,6 +290,48 @@ export class DashboardServer {
     })
 
     // ─────────────────────────────────────────────────────────────
+    // Tool Uses Endpoints (all Claude Code tools)
+    // ─────────────────────────────────────────────────────────────
+
+    // Get live tool uses (most recent)
+    this.app.get('/api/tools/live', (req: Request, res: Response) => {
+      try {
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50
+        const tools = this.db.getLiveToolUses(limit)
+        res.json(tools)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch live tool uses' })
+      }
+    })
+
+    // Get tool uses with filtering
+    this.app.get('/api/tools', (req: Request, res: Response) => {
+      try {
+        const filter: Record<string, unknown> = {}
+
+        if (req.query.toolName) filter.toolName = req.query.toolName
+        if (req.query.since) filter.since = new Date(req.query.since as string)
+        if (req.query.limit) filter.limit = parseInt(req.query.limit as string, 10)
+        if (req.query.offset) filter.offset = parseInt(req.query.offset as string, 10)
+
+        const tools = this.db.getToolUses(filter)
+        res.json(tools)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch tool uses' })
+      }
+    })
+
+    // Get tool use stats
+    this.app.get('/api/tools/stats', (_req: Request, res: Response) => {
+      try {
+        const stats = this.db.getToolUseStats()
+        res.json(stats)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch tool use stats' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
     // Bash Bro Endpoints
     // ─────────────────────────────────────────────────────────────
 

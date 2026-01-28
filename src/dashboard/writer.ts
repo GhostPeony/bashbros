@@ -6,7 +6,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
-import { DashboardDB, type InsertCommandInput, type InsertBroEventInput, type InsertBroStatusInput } from './db.js'
+import { DashboardDB, type InsertCommandInput, type InsertBroEventInput, type InsertBroStatusInput, type InsertToolUseInput } from './db.js'
 import type { RiskScore } from '../policy/risk-scorer.js'
 import type { PolicyViolation } from '../types.js'
 
@@ -29,6 +29,17 @@ export interface BroStatusInput {
   platform: string
   shell: string
   projectType?: string
+}
+
+export interface ToolUseInput {
+  toolName: string
+  toolInput: string
+  toolOutput: string
+  exitCode?: number | null
+  success?: boolean | null
+  cwd: string
+  repoName?: string | null
+  repoPath?: string | null
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -196,6 +207,24 @@ export class DashboardWriter {
     }
 
     return this.db.updateBroStatus(dbInput)
+  }
+
+  /**
+   * Record a generic tool use (for all Claude Code tools)
+   */
+  recordToolUse(input: ToolUseInput): string {
+    const dbInput: InsertToolUseInput = {
+      toolName: input.toolName,
+      toolInput: input.toolInput,
+      toolOutput: input.toolOutput,
+      exitCode: input.exitCode,
+      success: input.success,
+      cwd: input.cwd,
+      repoName: input.repoName,
+      repoPath: input.repoPath
+    }
+
+    return this.db.insertToolUse(dbInput)
   }
 
   /**

@@ -25,6 +25,8 @@ const CLAUDE_SETTINGS_PATH = join(homedir(), '.claude', 'settings.json')
 const CLAUDE_DIR = join(homedir(), '.claude')
 
 const BASHBROS_HOOK_MARKER = '# bashbros-managed'
+// Use --marker flag for Windows compatibility (ignored by the command but lets us identify our hooks)
+const BASHBROS_ALL_TOOLS_MARKER = '--marker=bashbros-all-tools'
 
 export class ClaudeCodeHooks {
   /**
@@ -213,21 +215,135 @@ export class ClaudeCodeHooks {
   static getStatus(): {
     claudeInstalled: boolean
     hooksInstalled: boolean
+    allToolsInstalled: boolean
     hooks: string[]
   } {
     const claudeInstalled = this.isClaudeInstalled()
     const settings = claudeInstalled ? this.loadSettings() : {}
     const hooksInstalled = this.isInstalled(settings)
+    const allToolsInstalled = this.isAllToolsInstalled(settings)
 
     const hooks: string[] = []
     if (settings.hooks?.PreToolUse) hooks.push('PreToolUse (gate)')
     if (settings.hooks?.PostToolUse) hooks.push('PostToolUse (record)')
     if (settings.hooks?.SessionEnd) hooks.push('SessionEnd (report)')
+    if (allToolsInstalled) hooks.push('PostToolUse (all-tools)')
 
     return {
       claudeInstalled,
       hooksInstalled,
+      allToolsInstalled,
       hooks
+    }
+  }
+
+  /**
+   * Check if all-tools recording is installed
+   */
+  static isAllToolsInstalled(settings?: ClaudeSettings): boolean {
+    const s = settings || this.loadSettings()
+
+    if (!s.hooks?.PostToolUse) return false
+
+    // Check for both old (# bashbros-all-tools) and new (--marker=bashbros-all-tools) formats
+    return s.hooks.PostToolUse.some(h =>
+      h.hooks.some(hook =>
+        hook.command.includes(BASHBROS_ALL_TOOLS_MARKER) ||
+        hook.command.includes('bashbros-all-tools')
+      )
+    )
+  }
+
+  /**
+   * Install all-tools recording hook (records ALL Claude Code tools, not just Bash)
+   */
+  static installAllTools(): { success: boolean; message: string } {
+    if (!this.isClaudeInstalled()) {
+      return {
+        success: false,
+        message: 'Claude Code not found. Install Claude Code first.'
+      }
+    }
+
+    const settings = this.loadSettings()
+
+    // Initialize hooks if not present
+    if (!settings.hooks) {
+      settings.hooks = {}
+    }
+
+    // Check if already installed
+    if (this.isAllToolsInstalled(settings)) {
+      return {
+        success: true,
+        message: 'BashBros all-tools recording already installed.'
+      }
+    }
+
+    // Add PostToolUse hook for ALL tools (empty matcher = all tools)
+    const allToolsHook: HookConfig = {
+      matcher: '',  // Empty matcher matches ALL tools
+      hooks: [{
+        type: 'command',
+        command: `bashbros record-tool ${BASHBROS_ALL_TOOLS_MARKER}`
+      }]
+    }
+
+    // Add to beginning of PostToolUse hooks so it runs for all tools
+    settings.hooks.PostToolUse = [
+      allToolsHook,
+      ...(settings.hooks.PostToolUse || [])
+    ]
+
+    this.saveSettings(settings)
+
+    return {
+      success: true,
+      message: 'BashBros all-tools recording installed. All Claude Code tools will now be recorded.'
+    }
+  }
+
+  /**
+   * Uninstall all-tools recording hook
+   */
+  static uninstallAllTools(): { success: boolean; message: string } {
+    if (!this.isClaudeInstalled()) {
+      return {
+        success: false,
+        message: 'Claude Code not found.'
+      }
+    }
+
+    const settings = this.loadSettings()
+
+    if (!settings.hooks?.PostToolUse) {
+      return {
+        success: true,
+        message: 'No all-tools hook to uninstall.'
+      }
+    }
+
+    // Remove all-tools hook (both old and new marker formats)
+    settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(h =>
+      !h.hooks.some(hook =>
+        hook.command.includes(BASHBROS_ALL_TOOLS_MARKER) ||
+        hook.command.includes('bashbros-all-tools')
+      )
+    )
+
+    // Clean up empty array
+    if (settings.hooks.PostToolUse.length === 0) {
+      delete settings.hooks.PostToolUse
+    }
+    if (Object.keys(settings.hooks).length === 0) {
+      delete settings.hooks
+    }
+
+    this.saveSettings(settings)
+
+    return {
+      success: true,
+      message: 'BashBros all-tools recording uninstalled.'
     }
   }
 }
