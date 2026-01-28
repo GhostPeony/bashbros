@@ -475,27 +475,112 @@ function getDefaultDashboard(): DashboardPolicy {
 
 function getDefaultCommands(profile: SecurityProfile) {
   const dangerousCommands = [
-    'rm -rf /',
-    'rm -rf ~',
-    'rm -rf /*',
+    // Destructive rm patterns (various flag orders)
+    'rm * /',
+    'rm * ~',
+    'rm * /*',
+    'rm * /home*',
+    'rm * /etc*',
+    'rm * /usr*',
+    'rm * /var*',
+    'rm * /bin*',
+    'rm * /sbin*',
+    'rm * /lib*',
+    'rm * /boot*',
+    'rm * /opt*',
+    'rm * /root*',
+    'rm * /srv*',
+    'rm * /mnt*',
+    'rm * /media*',
+    // Windows destructive patterns
+    'rm * C:\\*',
+    'rm * C:/*',
+    'Remove-Item * C:\\*',
+    'Remove-Item * C:/*',
+    'rd /s *',
+    'rmdir /s *',
+    // Fork bomb
     ':(){:|:&};:',
-    'mkfs',
-    'dd if=/dev/zero',
-    '> /dev/sda',
+    // Disk destruction
+    'mkfs*',
+    'dd if=/dev/zero*',
+    'dd of=/dev/*',
+    '> /dev/sda*',
+    '> /dev/nvme*',
+    '> /dev/hd*',
+    // Dangerous permission changes
+    'chmod -R 777 /*',
     'chmod -R 777 /',
-    'curl * | bash',
-    'wget * | bash',
-    'curl * | sh',
-    'wget * | sh'
+    'chmod * 777 /*',
+    'chown -R * /*',
+    // Pipe to shell (code execution)
+    'curl * | bash*',
+    'curl * | sh*',
+    'wget * | bash*',
+    'wget * | sh*',
+    'curl * | sudo*',
+    'wget * | sudo*',
+    // History/log destruction
+    'history -c*',
+    'shred *',
+    // Network attacks
+    ':(){ :|:& };:',
+    // Dangerous redirects
+    '> /etc/passwd*',
+    '> /etc/shadow*'
   ]
 
   const commonAllowed = [
-    'ls *', 'cat *', 'head *', 'tail *', 'grep *',
-    'git *', 'npm *', 'npx *', 'pnpm *', 'yarn *',
-    'node *', 'python *', 'pip *',
-    'mkdir *', 'touch *', 'cp *', 'mv *',
-    'cd *', 'pwd', 'echo *', 'which *',
-    'code *', 'vim *', 'nano *'
+    // File operations
+    'ls *', 'dir *', 'cat *', 'head *', 'tail *', 'less *', 'more *',
+    'grep *', 'find *', 'rg *', 'fd *',
+    'mkdir *', 'touch *', 'cp *', 'mv *', 'rm *',
+    'cd *', 'pwd', 'echo *', 'printf *', 'which *', 'where *', 'type *',
+    'tar *', 'zip *', 'unzip *', 'gzip *', 'gunzip *',
+
+    // Text processing
+    'sed *', 'awk *', 'sort *', 'uniq *', 'wc *', 'diff *', 'tr *',
+
+    // Version control
+    'git *', 'gh *',
+
+    // Package managers & runtimes
+    'npm *', 'npx *', 'pnpm *', 'yarn *', 'bun *',
+    'node *', 'deno *', 'tsx *', 'ts-node *',
+    'python *', 'python3 *', 'pip *', 'pip3 *', 'uv *', 'pipx *',
+    'cargo *', 'rustc *', 'rustup *',
+    'go *',
+
+    // Build tools
+    'tsc *', 'esbuild *', 'vite *', 'webpack *', 'rollup *', 'tsup *',
+    'make *', 'cmake *',
+
+    // Testing & linting
+    'jest *', 'vitest *', 'pytest *', 'mocha *',
+    'eslint *', 'prettier *', 'biome *', 'ruff *', 'black *',
+
+    // AI coding assistants
+    'claude *', 'aider *',
+
+    // Editors
+    'code *', 'cursor *', 'vim *', 'nvim *', 'nano *', 'emacs *',
+
+    // Docker & containers
+    'docker *', 'docker-compose *', 'podman *',
+
+    // Network (safe operations)
+    'curl *', 'wget *', 'ping *', 'ssh *',
+
+    // System info
+    'env', 'env *', 'printenv *', 'whoami', 'hostname', 'uname *', 'date', 'uptime',
+    'ps *', 'top', 'htop', 'btop',
+
+    // Shell basics
+    'clear', 'cls', 'history', 'alias *', 'export *', 'source *', 'exit',
+    'true', 'false', 'test *', 'man *', 'help *',
+
+    // PowerShell (Windows)
+    'Get-*', 'Set-*', 'New-*', 'Remove-*', 'Select-*', 'Where-*', 'ForEach-*'
   ]
 
   if (profile === 'strict') {
