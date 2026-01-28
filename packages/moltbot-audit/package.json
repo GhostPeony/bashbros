@@ -1,0 +1,57 @@
+{
+  "name": "@bashbros/moltbot-audit",
+  "version": "0.1.0",
+  "description": "Moltbot hook plugin for BashBros audit logging and output scanning",
+  "type": "module",
+  "main": "dist/handler.js",
+  "types": "dist/handler.d.ts",
+  "moltbot": {
+    "hooks": ["."]
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "bashbros",
+    "moltbot",
+    "clawdbot",
+    "hook",
+    "audit",
+    "security",
+    "logging"
+  ],
+  "author": "GhostPeony",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GhostPeony/bashbros.git",
+    "directory": "packages/moltbot-audit"
+  },
+  "homepage": "https://github.com/GhostPeony/bashbros/tree/main/packages/moltbot-audit",
+  "bugs": {
+    "url": "https://github.com/GhostPeony/bashbros/issues"
+  },
+  "peerDependencies": {
+    "bashbros": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "bashbros": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "HOOK.md",
+    "README.md"
+  ]
+}

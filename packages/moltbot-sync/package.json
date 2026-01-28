@@ -1,0 +1,55 @@
+{
+  "name": "@bashbros/moltbot-sync",
+  "version": "0.1.0",
+  "description": "Sync BashBros security policies to Moltbot exec-approvals",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "bashbros-moltbot-sync": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "bashbros",
+    "moltbot",
+    "clawdbot",
+    "security",
+    "exec-approvals",
+    "allowlist"
+  ],
+  "author": "GhostPeony",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GhostPeony/bashbros.git",
+    "directory": "packages/moltbot-sync"
+  },
+  "homepage": "https://github.com/GhostPeony/bashbros/tree/main/packages/moltbot-sync",
+  "bugs": {
+    "url": "https://github.com/GhostPeony/bashbros/issues"
+  },
+  "peerDependencies": {
+    "bashbros": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "bashbros": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ]
+}
