@@ -269,7 +269,93 @@ undo:
 - [Aider](https://aider.chat)
 - [OpenCode](https://github.com/opencode-ai/opencode)
 - [Ollama](https://ollama.ai) (local AI)
+- [BashGym](https://github.com/GhostPeony/bashgym) - Self-improving agent training
 - Any CLI agent using bash/shell
+
+## BashGym Integration
+
+> **Note**: BashGym is releasing after BashBros. This integration documentation describes the planned interface and may be updated in future versions.
+
+BashBros integrates with [BashGym](https://github.com/GhostPeony/bashgym), a self-improving agent training system. When linked, BashBros exports execution traces that BashGym uses to train better AI sidekick models.
+
+### How It Works
+
+```
+BashBros captures traces → BashGym trains → GGUF to Ollama → BashBros sidekick improves
+```
+
+1. **Trace Export**: BashBros captures command sessions and exports them to `~/.bashgym/integration/traces/pending/`
+2. **Training**: BashGym processes traces, classifies quality, and trains models
+3. **Model Delivery**: Trained models are exported to GGUF format and registered with Ollama
+4. **Hot-Swap**: BashBros detects new models and hot-swaps the sidekick without restart
+
+### Linking to BashGym
+
+During `bashbros init`, you'll be asked if you want to link to BashGym:
+
+```
+? Link to BashGym? (enables self-improving AI sidekick)
+  > Yes (recommended) - Export traces for training, get smarter sidekick
+    No - Use bashbros standalone
+```
+
+### Shared Directory
+
+The integration uses `~/.bashgym/integration/`:
+
+```
+~/.bashgym/integration/
+├── traces/pending/     # BashBros → BashGym (new traces)
+├── traces/processed/   # Ingested traces
+├── models/latest/      # BashGym → BashBros (current model)
+├── models/manifest.json
+├── config/settings.json
+└── status/             # Heartbeat files
+```
+
+### Capture Modes
+
+Configure in `settings.json` or via BashGym dashboard:
+
+| Mode | Description |
+|------|-------------|
+| `everything` | Capture all sessions |
+| `successful_only` | Only verified/successful traces (default) |
+| `sidekick_curated` | AI picks teachable moments |
+
+### Model Hot-Swap
+
+When BashGym trains a new model, BashBros detects it automatically:
+
+```bash
+$ bashbros status
+# Shows: AI: Connected (bashgym sidekick v3)
+```
+
+### Programmatic Usage
+
+```typescript
+import { BashBro } from 'bashbros'
+import { getBashgymIntegration } from 'bashbros/integration'
+
+const bro = new BashBro({ enableBashgymIntegration: true })
+await bro.initialize()
+
+// Check integration status
+if (bro.isUsingBashgymModel()) {
+  console.log(`Using model: ${bro.getBashgymModelVersion()}`)
+}
+
+// Listen for model updates
+const integration = getBashgymIntegration()
+integration.on('model:updated', (version) => {
+  console.log(`New model: ${version}`)
+})
+```
+
+### Security Delegation
+
+When linked, BashBros acts as primary security - BashGym defers all security checks to BashBros policies.
 
 ## API Usage
 

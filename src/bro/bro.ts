@@ -6,6 +6,7 @@ import { TaskRouter, RoutingResult } from './router.js'
 import { CommandSuggester, Suggestion, SuggestionContext } from './suggester.js'
 import { BackgroundWorker, BackgroundTask } from './worker.js'
 import { OllamaClient } from './ollama.js'
+import { getBashgymIntegration, type ModelManifest } from '../integration/bashgym.js'
 
 export interface BroConfig {
   modelEndpoint?: string  // Ollama endpoint (default: http://localhost:11434)
@@ -14,6 +15,7 @@ export interface BroConfig {
   enableRouting?: boolean
   enableBackground?: boolean
   enableOllama?: boolean  // Use Ollama for AI features
+  enableBashgymIntegration?: boolean  // Enable bashgym integration for model hot-swap
 }
 
 // Allowlist of commands that can be executed directly
@@ -109,6 +111,7 @@ export class BashBro extends EventEmitter {
   private profile: SystemProfile | null = null
   private config: BroConfig
   private ollamaAvailable: boolean = false
+  private bashgymModelVersion: string | null = null
 
   constructor(config: BroConfig = {}) {
     super()
@@ -118,6 +121,7 @@ export class BashBro extends EventEmitter {
       enableRouting: true,
       enableBackground: true,
       enableOllama: true,
+      enableBashgymIntegration: true,
       ...config
     }
 
@@ -138,6 +142,64 @@ export class BashBro extends EventEmitter {
     this.worker.on('complete', (data) => this.emit('task:complete', data))
     this.worker.on('output', (data) => this.emit('task:output', data))
     this.worker.on('error', (data) => this.emit('task:error', data))
+
+    // Initialize bashgym integration for model hot-swap
+    if (this.config.enableBashgymIntegration) {
+      this.initBashgymIntegration()
+    }
+  }
+
+  /**
+   * Initialize bashgym integration for model hot-swap
+   */
+  private initBashgymIntegration(): void {
+    try {
+      const integration = getBashgymIntegration()
+
+      // Listen for model updates
+      integration.on('model:updated', (version: string, manifest: ModelManifest) => {
+        this.handleModelUpdate(version, manifest)
+      })
+
+      // Check if we should use the bashgym sidekick model
+      if (integration.isLinked()) {
+        const modelName = integration.getOllamaModelName()
+        const currentVersion = integration.getCurrentModelVersion()
+
+        if (currentVersion && this.ollama) {
+          // Use the bashgym-trained sidekick model
+          this.ollama.setModel(`${modelName}:${currentVersion}`)
+          this.bashgymModelVersion = currentVersion
+          console.log(`🤝 Bash Bro: Using bashgym sidekick model (${currentVersion})`)
+        }
+      }
+    } catch {
+      // Integration not available - continue without it
+    }
+  }
+
+  /**
+   * Handle model update from bashgym (hot-swap)
+   */
+  private handleModelUpdate(version: string, manifest: ModelManifest): void {
+    if (!this.ollama) return
+
+    // Don't update if it's the same version
+    if (version === this.bashgymModelVersion) return
+
+    try {
+      const integration = getBashgymIntegration()
+      const modelName = integration.getOllamaModelName()
+
+      // Hot-swap to the new model
+      this.ollama.setModel(`${modelName}:${version}`)
+      this.bashgymModelVersion = version
+
+      console.log(`🤝 Bash Bro: Model hot-swapped to ${version}`)
+      this.emit('model:updated', version)
+    } catch (error) {
+      console.error('Failed to hot-swap model:', error)
+    }
   }
 
   async initialize(): Promise<void> {
@@ -368,6 +430,48 @@ export class BashBro extends EventEmitter {
     return this.ollama.naturalToCommand(description)
   }
 
+  /**
+   * Get bashgym sidekick model version (if using)
+   */
+  getBashgymModelVersion(): string | null {
+    return this.bashgymModelVersion
+  }
+
+  /**
+   * Check if using bashgym-trained sidekick model
+   */
+  isUsingBashgymModel(): boolean {
+    return this.bashgymModelVersion !== null
+  }
+
+  /**
+   * Force refresh the bashgym model (check for updates)
+   */
+  refreshBashgymModel(): boolean {
+    if (!this.config.enableBashgymIntegration) {
+      return false
+    }
+
+    try {
+      const integration = getBashgymIntegration()
+      const currentVersion = integration.getCurrentModelVersion()
+
+      if (currentVersion && currentVersion !== this.bashgymModelVersion) {
+        const modelName = integration.getOllamaModelName()
+        if (this.ollama) {
+          this.ollama.setModel(`${modelName}:${currentVersion}`)
+          this.bashgymModelVersion = currentVersion
+          this.emit('model:updated', currentVersion)
+          return true
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+
+    return false
+  }
+
   // Format a nice status message
   status(): string {
     const lines: string[] = [
@@ -401,9 +505,29 @@ export class BashBro extends EventEmitter {
     // Ollama connection status
     lines.push('')
     if (this.ollamaAvailable) {
-      lines.push(`AI: Connected (${this.ollama?.getModel() || 'default'})`)
+      const model = this.ollama?.getModel() || 'default'
+      if (this.bashgymModelVersion) {
+        lines.push(`AI: Connected (bashgym sidekick ${this.bashgymModelVersion})`)
+      } else {
+        lines.push(`AI: Connected (${model})`)
+      }
     } else {
       lines.push('AI: Not connected (run Ollama for AI features)')
+    }
+
+    // Bashgym integration status
+    if (this.config.enableBashgymIntegration) {
+      try {
+        const integration = getBashgymIntegration()
+        if (integration.isLinked()) {
+          lines.push(`BashGym: Linked`)
+          if (integration.isBashgymRunning()) {
+            lines.push(`  Status: Running`)
+          }
+        }
+      } catch {
+        // Integration not available
+      }
     }
 
     lines.push('')

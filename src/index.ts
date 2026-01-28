@@ -40,9 +40,24 @@ export { ReportGenerator } from './observability/report.js'
 
 // Hooks
 export { ClaudeCodeHooks, gateCommand } from './hooks/claude-code.js'
+export { MoltbotHooks, getMoltbotHooks } from './hooks/moltbot.js'
+export {
+  detectMoltbotSession,
+  isInMoltbotSession,
+  getMoltbotSessionId,
+  getMoltbotAgentName,
+  isSandboxEnabled
+} from './hooks/moltbot-runtime.js'
 
 // Safety
 export { UndoStack } from './safety/undo-stack.js'
+
+// Integration (bashgym)
+export {
+  BashgymIntegration,
+  getBashgymIntegration,
+  resetBashgymIntegration,
+} from './integration/bashgym.js'
 
 // Types
 export type {
@@ -62,7 +77,12 @@ export type {
   UndoPolicy,
   CommandResult,
   PolicyViolation,
-  AuditEntry
+  AuditEntry,
+  // Moltbot types
+  MoltbotGatewayInfo,
+  MoltbotSessionContext,
+  MoltbotSecurityAuditResult,
+  MoltbotSecurityFinding
 } from './types.js'
 
 export type { SystemProfile, VersionInfo, OllamaInfo } from './bro/profiler.js'
@@ -79,5 +99,15 @@ export type { SessionMetrics, CommandMetric } from './observability/metrics.js'
 export type { CostEstimate, ModelPricing } from './observability/cost.js'
 export type { ReportOptions } from './observability/report.js'
 export type { ClaudeSettings } from './hooks/claude-code.js'
+export type { MoltbotSettings, MoltbotStatus, MoltbotGatewayStatus } from './hooks/moltbot.js'
 export type { UndoEntry, UndoResult, UndoConfig } from './safety/undo-stack.js'
 export type { ScanResult, Finding } from './policy/output-scanner.js'
+export type {
+  IntegrationSettings,
+  TraceData,
+  TraceStep,
+  ModelManifest,
+  ModelVersion,
+  CaptureMode,
+  TrainingTrigger,
+} from './integration/bashgym.js'

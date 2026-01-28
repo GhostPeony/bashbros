@@ -9,7 +9,8 @@
     "bashbros": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && npm run copy-static",
+    "copy-static": "node -e \"const fs=require('fs');fs.mkdirSync('dist/static',{recursive:true});fs.cpSync('src/dashboard/static','dist/static',{recursive:true})\"",
     "dev": "tsup --watch",
     "test": "vitest",
     "lint": "eslint src/",
@@ -39,18 +40,24 @@
     "node": ">=18"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
+    "express": "^5.2.1",
     "inquirer": "^9.2.0",
     "node-pty": "^1.0.0",
-    "yaml": "^2.4.0",
-    "winston": "^3.13.0"
+    "winston": "^3.13.0",
+    "ws": "^8.19.0",
+    "yaml": "^2.4.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
     "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.0.0",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "^1.6.0",
-    "eslint": "^9.0.0"
+    "vitest": "^1.6.0"
   }
 }

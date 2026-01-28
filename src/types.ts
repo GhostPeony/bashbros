@@ -12,15 +12,48 @@ export interface BashBrosConfig {
   anomalyDetection: AnomalyDetectionPolicy
   outputScanning: OutputScanningPolicy
   undo: UndoPolicy
+  // Ward & Dashboard
+  ward: WardPolicy
+  dashboard: DashboardPolicy
 }
 
 export type AgentType =
   | 'claude-code'
-  | 'clawdbot'
+  | 'clawdbot'    // Keep for backward compatibility
+  | 'moltbot'     // New canonical name for clawd.bot
   | 'gemini-cli'
   | 'aider'
   | 'opencode'
   | 'custom'
+
+// Moltbot-specific types
+export interface MoltbotGatewayInfo {
+  port: number
+  host: string
+  sandboxMode: boolean
+  authToken?: boolean  // Indicate presence, never expose actual token
+}
+
+export interface MoltbotSessionContext {
+  inMoltbotSession: boolean
+  sessionId?: string
+  agentName?: string
+  sandboxMode: boolean
+  customConfigPath?: string
+}
+
+export interface MoltbotSecurityAuditResult {
+  passed: boolean
+  findings: MoltbotSecurityFinding[]
+  timestamp: Date
+}
+
+export interface MoltbotSecurityFinding {
+  severity: 'info' | 'warning' | 'critical'
+  category: string
+  message: string
+  recommendation?: string
+}
 
 export type SecurityProfile = 'balanced' | 'strict' | 'permissive' | 'custom'
 
@@ -124,4 +157,62 @@ export interface AuditEntry {
   exitCode?: number
   duration: number
   agent: AgentType
+}
+
+// Agent Transparency Types
+
+export interface AgentConfigInfo {
+  agent: AgentType
+  installed: boolean
+  version?: string
+  configPath?: string
+  configExists: boolean
+  permissions?: AgentPermissions
+  hooks?: string[]
+  lastModified?: Date
+  bashbrosIntegrated: boolean
+}
+
+export interface AgentPermissions {
+  allowedPaths?: string[]
+  blockedCommands?: string[]
+  rateLimit?: number
+  securityProfile?: string
+  customPolicies?: Record<string, unknown>
+}
+
+export interface EffectivePermissions {
+  allowedPaths: { bashbros: string[]; agent: string[]; effective: string[] }
+  riskThreshold: { bashbros: number; agent: number | null; effective: number }
+  rateLimit: { bashbros: number; agent: number | null; effective: number }
+  blockedCommands: { bashbros: string[]; agent: string[]; effective: string[] }
+}
+
+// Ward & Dashboard configuration
+export interface WardPolicy {
+  enabled: boolean
+  exposure: {
+    scanInterval: number
+    externalProbe: boolean
+    severityActions: {
+      low: 'alert' | 'block' | 'block_and_kill'
+      medium: 'alert' | 'block' | 'block_and_kill'
+      high: 'alert' | 'block' | 'block_and_kill'
+      critical: 'alert' | 'block' | 'block_and_kill'
+    }
+  }
+  connectors: {
+    proxyAllMcp: boolean
+    telemetryRetention: string
+  }
+  egress: {
+    defaultAction: 'block' | 'alert' | 'log'
+    patternsFile?: string
+  }
+}
+
+export interface DashboardPolicy {
+  enabled: boolean
+  port: number
+  bind: string
 }

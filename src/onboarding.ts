@@ -1,21 +1,28 @@
 import inquirer from 'inquirer'
 import chalk from 'chalk'
-import { writeFileSync } from 'fs'
+import { writeFileSync, existsSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { homedir } from 'os'
 import { stringify } from 'yaml'
 import type { BashBrosConfig, AgentType, SecurityProfile } from './types.js'
 import { getDefaultConfig } from './config.js'
+import { getBashgymIntegration } from './integration/bashgym.js'
 
 export async function runOnboarding(): Promise<void> {
   console.log(chalk.dim('  "I watch your agent\'s back so you don\'t have to."\n'))
 
-  const answers = await inquirer.prompt([
+  // Check if bashgym integration is available
+  const bashgymAvailable = existsSync(join(homedir(), '.bashgym', 'integration'))
+
+  const questions: any[] = [
     {
       type: 'list',
       name: 'agent',
       message: 'What agent are you protecting?',
       choices: [
         { name: 'Claude Code', value: 'claude-code' },
-        { name: 'Clawdbot', value: 'clawdbot' },
+        { name: 'Moltbot (clawd.bot)', value: 'moltbot' },
+        { name: 'Clawdbot (legacy)', value: 'clawdbot' },
         { name: 'Gemini CLI', value: 'gemini-cli' },
         { name: 'Aider', value: 'aider' },
         { name: 'OpenCode', value: 'opencode' },
@@ -78,7 +85,28 @@ export async function runOnboarding(): Promise<void> {
         { name: 'None', value: 'disabled' }
       ]
     }
-  ])
+  ]
+
+  // Add bashgym integration question if available
+  if (bashgymAvailable) {
+    questions.push({
+      type: 'list',
+      name: 'bashgym',
+      message: 'Link to BashGym? (enables self-improving AI sidekick)',
+      choices: [
+        {
+          name: 'Yes (recommended) - Export traces for training, get smarter sidekick',
+          value: 'link'
+        },
+        {
+          name: 'No - Use bashbros standalone',
+          value: 'skip'
+        }
+      ]
+    })
+  }
+
+  const answers = await inquirer.prompt(questions)
 
   // Build config
   const config = buildConfig(answers)
@@ -91,10 +119,97 @@ export async function runOnboarding(): Promise<void> {
   console.log(chalk.green('✓'), 'Config written to', chalk.cyan('.bashbros.yml'))
   console.log(chalk.green('✓'), 'PTY wrapper ready')
   console.log(chalk.green('✓'), 'Audit logging', answers.audit !== 'disabled' ? 'enabled' : 'disabled')
+
+  // Handle bashgym integration
+  if (answers.bashgym === 'link') {
+    const linked = await linkBashgym()
+    if (linked) {
+      console.log(chalk.green('✓'), 'BashGym integration', chalk.cyan('linked'))
+      console.log(chalk.dim('  Traces will be exported for training'))
+      console.log(chalk.dim('  AI sidekick will improve over time'))
+    } else {
+      console.log(chalk.yellow('⚠'), 'BashGym integration', chalk.dim('not linked (bashgym not running?)'))
+    }
+  } else if (bashgymAvailable) {
+    console.log(chalk.dim('○'), 'BashGym integration', chalk.dim('skipped'))
+  }
+
   console.log()
   console.log(chalk.dim("Run"), chalk.cyan("'bashbros doctor'"), chalk.dim("to verify setup"))
   console.log(chalk.dim("Run"), chalk.cyan("'bashbros watch'"), chalk.dim("to start protection"))
   console.log()
+}
+
+/**
+ * Link bashbros to bashgym integration
+ */
+async function linkBashgym(): Promise<boolean> {
+  try {
+    const integration = getBashgymIntegration()
+
+    // Check if bashgym directory exists
+    if (!integration.isAvailable()) {
+      // Create the integration directory structure
+      const integrationDir = join(homedir(), '.bashgym', 'integration')
+      const dirs = [
+        join(integrationDir, 'traces', 'pending'),
+        join(integrationDir, 'traces', 'processed'),
+        join(integrationDir, 'traces', 'failed'),
+        join(integrationDir, 'models', 'latest'),
+        join(integrationDir, 'config'),
+        join(integrationDir, 'status'),
+      ]
+
+      for (const dir of dirs) {
+        mkdirSync(dir, { recursive: true })
+      }
+
+      // Create initial settings file
+      const settingsPath = join(integrationDir, 'config', 'settings.json')
+      const settings = {
+        version: '1.0',
+        updated_at: new Date().toISOString(),
+        updated_by: 'bashbros',
+        integration: {
+          enabled: true,
+          linked_at: new Date().toISOString(),
+        },
+        capture: {
+          mode: 'successful_only',
+          auto_stream: true,
+        },
+        training: {
+          auto_enabled: false,
+          quality_threshold: 50,
+          trigger: 'quality_based',
+        },
+        security: {
+          bashbros_primary: true,
+          policy_path: null,
+        },
+        model_sync: {
+          auto_export_ollama: true,
+          ollama_model_name: 'bashgym-sidekick',
+          notify_on_update: true,
+        },
+      }
+
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+    } else {
+      // Update existing settings to enable integration
+      integration.updateSettings({
+        integration: {
+          enabled: true,
+          linked_at: new Date().toISOString(),
+        },
+      } as any)
+    }
+
+    return true
+  } catch (error) {
+    console.error('Failed to link bashgym:', error)
+    return false
+  }
 }
 
 function buildConfig(answers: Record<string, string>): BashBrosConfig {

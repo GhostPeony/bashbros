@@ -10,7 +10,9 @@ import type {
   AnomalyDetectionPolicy,
   OutputScanningPolicy,
   UndoPolicy,
-  RiskPattern
+  RiskPattern,
+  WardPolicy,
+  DashboardPolicy
 } from './types.js'
 
 const CONFIG_FILENAME = '.bashbros.yml'
@@ -359,7 +361,9 @@ export function getDefaultConfig(): BashBrosConfig {
     loopDetection: getDefaultLoopDetection('balanced'),
     anomalyDetection: getDefaultAnomalyDetection('balanced'),
     outputScanning: getDefaultOutputScanning('balanced'),
-    undo: getDefaultUndo()
+    undo: getDefaultUndo(),
+    ward: getDefaultWard(),
+    dashboard: getDefaultDashboard()
   }
 }
 
@@ -438,6 +442,37 @@ function getDefaultUndo(): UndoPolicy {
   }
 }
 
+function getDefaultWard(): WardPolicy {
+  return {
+    enabled: true,
+    exposure: {
+      scanInterval: 30000,  // 30 seconds
+      externalProbe: false,
+      severityActions: {
+        low: 'alert',
+        medium: 'alert',
+        high: 'block',
+        critical: 'block_and_kill'
+      }
+    },
+    connectors: {
+      proxyAllMcp: false,
+      telemetryRetention: '7d'
+    },
+    egress: {
+      defaultAction: 'block'
+    }
+  }
+}
+
+function getDefaultDashboard(): DashboardPolicy {
+  return {
+    enabled: true,
+    port: 7890,
+    bind: '127.0.0.1'
+  }
+}
+
 function getDefaultCommands(profile: SecurityProfile) {
   const dangerousCommands = [
     'rm -rf /',
@@ -511,7 +546,9 @@ function mergeWithDefaults(parsed: Partial<BashBrosConfig>): BashBrosConfig {
     loopDetection: { ...defaults.loopDetection, ...parsed.loopDetection },
     anomalyDetection: { ...defaults.anomalyDetection, ...parsed.anomalyDetection },
     outputScanning: { ...defaults.outputScanning, ...parsed.outputScanning },
-    undo: { ...defaults.undo, ...parsed.undo }
+    undo: { ...defaults.undo, ...parsed.undo },
+    ward: { ...defaults.ward, ...parsed.ward },
+    dashboard: { ...defaults.dashboard, ...parsed.dashboard }
   }
 }
 

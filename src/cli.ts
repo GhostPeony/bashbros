@@ -6,12 +6,25 @@ import { startWatch } from './watch.js'
 import { handleAllow } from './allow.js'
 import { BashBro } from './bro/bro.js'
 import { ClaudeCodeHooks, gateCommand } from './hooks/claude-code.js'
+import { MoltbotHooks } from './hooks/moltbot.js'
 import { RiskScorer } from './policy/risk-scorer.js'
 import { MetricsCollector } from './observability/metrics.js'
+import {
+  getAllAgentConfigs,
+  getAgentConfigInfo,
+  formatRedactedConfig
+} from './transparency/index.js'
+import {
+  formatAllAgentsInfo,
+  formatPermissionsTable,
+  getEffectivePermissions
+} from './transparency/display.js'
 import { CostEstimator } from './observability/cost.js'
 import { ReportGenerator } from './observability/report.js'
 import { UndoStack } from './safety/undo-stack.js'
 import { LoopDetector } from './policy/loop-detector.js'
+import { DashboardServer } from './dashboard/index.js'
+import { ExposureScanner, EgressMonitor, EgressPatternMatcher } from './policy/ward/index.js'
 
 // Shared state for session tracking
 let metricsCollector: MetricsCollector | null = null
@@ -96,6 +109,14 @@ program
 
     console.log(bro.getSystemContext())
     console.log()
+
+    // Add Agent Configurations section
+    console.log(chalk.bold('\n## Agent Configurations\n'))
+    const { formatAgentSummary } = await import('./transparency/display.js')
+    const agents = await getAllAgentConfigs()
+    console.log(formatAgentSummary(agents))
+    console.log()
+
     console.log(chalk.green('✓'), 'System profile saved to ~/.bashbros/system-profile.json')
   })
 
@@ -473,6 +494,216 @@ hookCmd
     console.log()
   })
 
+// ─────────────────────────────────────────────────────────────
+// Moltbot Integration Commands
+// ─────────────────────────────────────────────────────────────
+
+const moltbotCmd = program
+  .command('moltbot')
+  .alias('clawdbot')
+  .description('Manage Moltbot/Clawdbot integration')
+
+moltbotCmd
+  .command('install')
+  .description('Install BashBros hooks into Moltbot')
+  .action(() => {
+    const result = MoltbotHooks.install()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+moltbotCmd
+  .command('uninstall')
+  .description('Remove BashBros hooks from Moltbot')
+  .action(() => {
+    const result = MoltbotHooks.uninstall()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+moltbotCmd
+  .command('status')
+  .description('Check Moltbot integration status')
+  .action(async () => {
+    const status = MoltbotHooks.getStatus()
+    console.log()
+    console.log(chalk.bold('Moltbot Integration Status'))
+    console.log()
+
+    // Installation status
+    if (status.moltbotInstalled) {
+      console.log(`  Moltbot:       ${chalk.green('installed')}`)
+    } else if (status.clawdbotInstalled) {
+      console.log(`  Clawdbot:      ${chalk.green('installed')} ${chalk.dim('(legacy)')}`)
+    } else {
+      console.log(`  Moltbot:       ${chalk.yellow('not found')}`)
+    }
+
+    // Config status
+    if (status.configPath) {
+      console.log(`  Config:        ${chalk.green(status.configPath)}`)
+    } else {
+      console.log(`  Config:        ${chalk.dim('not found')}`)
+    }
+
+    // Hooks status
+    console.log(`  BashBros hooks: ${status.hooksInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    if (status.hooks.length > 0) {
+      console.log(`  Active hooks:  ${status.hooks.join(', ')}`)
+    }
+
+    // Sandbox mode
+    if (status.sandboxMode) {
+      const sandboxColor = status.sandboxMode === 'strict' ? chalk.green : chalk.yellow
+      console.log(`  Sandbox mode:  ${sandboxColor(status.sandboxMode)}`)
+    }
+
+    console.log()
+  })
+
+moltbotCmd
+  .command('gateway')
+  .description('Check Moltbot gateway status')
+  .action(async () => {
+    console.log()
+    console.log(chalk.bold('Moltbot Gateway Status'))
+    console.log()
+
+    const gatewayStatus = await MoltbotHooks.getGatewayStatus()
+
+    if (gatewayStatus.running) {
+      console.log(`  Status:     ${chalk.green('running')}`)
+      console.log(`  Host:       ${gatewayStatus.host}`)
+      console.log(`  Port:       ${gatewayStatus.port}`)
+      console.log(`  Sandbox:    ${gatewayStatus.sandboxMode ? chalk.green('enabled') : chalk.yellow('disabled')}`)
+    } else {
+      console.log(`  Status:     ${chalk.yellow('not running')}`)
+      console.log(`  Expected:   ${gatewayStatus.host}:${gatewayStatus.port}`)
+      if (gatewayStatus.error) {
+        console.log(`  Error:      ${chalk.dim(gatewayStatus.error)}`)
+      }
+    }
+
+    console.log()
+  })
+
+moltbotCmd
+  .command('audit')
+  .description('Run Moltbot security audit')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    console.log(chalk.dim('Running security audit...\n'))
+
+    const result = await MoltbotHooks.runSecurityAudit()
+
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2))
+      return
+    }
+
+    // Display results
+    const statusIcon = result.passed ? chalk.green('✓') : chalk.red('✗')
+    const statusText = result.passed ? chalk.green('PASSED') : chalk.red('FAILED')
+
+    console.log(`${statusIcon} Security Audit: ${statusText}`)
+    console.log()
+
+    if (result.findings.length === 0) {
+      console.log(chalk.dim('  No findings.'))
+    } else {
+      const severityColors: Record<string, (s: string) => string> = {
+        critical: chalk.bgRed.white,
+        warning: chalk.yellow,
+        info: chalk.dim
+      }
+
+      for (const finding of result.findings) {
+        const color = severityColors[finding.severity] || chalk.white
+        console.log(`  ${color(`[${finding.severity.toUpperCase()}]`)} ${finding.message}`)
+        console.log(chalk.dim(`    Category: ${finding.category}`))
+        if (finding.recommendation) {
+          console.log(chalk.dim(`    Fix: ${finding.recommendation}`))
+        }
+        console.log()
+      }
+    }
+
+    console.log(chalk.dim(`Audit completed at ${result.timestamp.toLocaleString()}`))
+    console.log()
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Agent Transparency Commands
+// ─────────────────────────────────────────────────────────────
+
+program
+  .command('agent-info [agent]')
+  .description('Show detailed info about installed agents and their configurations')
+  .option('-r, --raw', 'Show raw (redacted) config contents')
+  .action(async (agent, options) => {
+    console.log(chalk.cyan(logo))
+
+    if (agent) {
+      // Show specific agent
+      const validAgents = ['claude-code', 'moltbot', 'clawdbot', 'aider', 'gemini-cli', 'opencode']
+      if (!validAgents.includes(agent)) {
+        console.log(chalk.red(`Unknown agent: ${agent}`))
+        console.log(chalk.dim(`Valid agents: ${validAgents.join(', ')}`))
+        return
+      }
+
+      const info = await getAgentConfigInfo(agent as any)
+      const { formatAgentInfo } = await import('./transparency/display.js')
+      console.log()
+      console.log(formatAgentInfo(info))
+
+      // Show raw config if requested
+      if (options.raw && info.configExists && info.configPath) {
+        const { parseAgentConfig } = await import('./transparency/config-parser.js')
+        const parsed = await parseAgentConfig(agent as any, info.configPath)
+        if (parsed?.rawRedacted) {
+          console.log()
+          console.log(chalk.bold('Configuration (sensitive data redacted):'))
+          console.log(formatRedactedConfig(parsed.rawRedacted))
+        }
+      }
+    } else {
+      // Show all agents
+      const agents = await getAllAgentConfigs()
+      console.log()
+      console.log(formatAllAgentsInfo(agents))
+    }
+    console.log()
+  })
+
+program
+  .command('permissions')
+  .description('Show combined permissions view across bashbros and agents')
+  .action(async () => {
+    console.log(chalk.cyan(logo))
+
+    const agents = await getAllAgentConfigs()
+    const installed = agents.filter(a => a.installed)
+
+    if (installed.length === 0) {
+      console.log(chalk.yellow('No agents installed to compare permissions with.'))
+      console.log(chalk.dim('Install an agent (claude, aider, etc.) to see combined permissions.'))
+      return
+    }
+
+    console.log()
+    console.log(formatPermissionsTable(agents))
+    console.log()
+  })
+
 program
   .command('gate <command>')
   .description('Check if a command should be allowed (used by hooks)')
@@ -659,6 +890,256 @@ undoCmd
 
     console.log()
     console.log(undoStack.formatStack())
+    console.log()
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Dashboard Commands
+// ─────────────────────────────────────────────────────────────
+
+let dashboardServer: DashboardServer | null = null
+
+program
+  .command('dashboard')
+  .description('Start the BashBros dashboard')
+  .option('-p, --port <port>', 'Port to run on', '7890')
+  .option('-b, --bind <address>', 'Address to bind to', '127.0.0.1')
+  .action(async (options) => {
+    console.log(chalk.cyan(logo))
+    console.log(chalk.dim('  Starting dashboard...\n'))
+
+    dashboardServer = new DashboardServer({
+      port: parseInt(options.port),
+      bind: options.bind
+    })
+
+    await dashboardServer.start()
+    console.log(chalk.green('✓'), `Dashboard running at http://${options.bind}:${options.port}`)
+    console.log(chalk.dim('  Press Ctrl+C to stop'))
+
+    // Keep process alive
+    process.on('SIGINT', async () => {
+      console.log(chalk.dim('\n  Stopping dashboard...'))
+      await dashboardServer?.stop()
+      process.exit(0)
+    })
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Ward Commands
+// ─────────────────────────────────────────────────────────────
+
+const wardCmd = program
+  .command('ward')
+  .description('Network and connector security')
+
+wardCmd
+  .command('status')
+  .description('Show ward security status')
+  .action(async () => {
+    console.log(chalk.cyan(logo))
+    console.log(chalk.bold('Ward Security Status\n'))
+
+    const scanner = new ExposureScanner()
+    const results = await scanner.scan()
+
+    if (results.length === 0) {
+      console.log(chalk.green('✓'), 'No exposed agent servers detected')
+    } else {
+      console.log(chalk.yellow('⚠'), `Found ${results.length} exposure(s):\n`)
+      for (const r of results) {
+        const color = r.severity === 'critical' ? chalk.bgRed.white :
+                      r.severity === 'high' ? chalk.red :
+                      r.severity === 'medium' ? chalk.yellow :
+                      chalk.dim
+        console.log(`  ${color(r.severity.toUpperCase().padEnd(8))} ${r.message}`)
+      }
+    }
+    console.log()
+  })
+
+wardCmd
+  .command('scan')
+  .description('Run exposure scan')
+  .action(async () => {
+    console.log(chalk.cyan(logo))
+    console.log(chalk.dim('  Scanning for exposed agent servers...\n'))
+
+    const scanner = new ExposureScanner()
+    const results = await scanner.scan()
+
+    if (results.length === 0) {
+      console.log(chalk.green('✓'), 'No exposed agent servers detected')
+    } else {
+      for (const r of results) {
+        const icon = r.severity === 'critical' ? '🚨' :
+                     r.severity === 'high' ? '⚠️' :
+                     r.severity === 'medium' ? '⚡' : 'ℹ️'
+
+        console.log(`${icon} ${r.agent}`)
+        console.log(chalk.dim(`   Port: ${r.port}`))
+        console.log(chalk.dim(`   Bind: ${r.bindAddress}`))
+        console.log(chalk.dim(`   Auth: ${r.hasAuth}`))
+        console.log(chalk.dim(`   Severity: ${r.severity}`))
+        console.log(chalk.dim(`   Action: ${r.action}`))
+        console.log()
+      }
+    }
+  })
+
+const exposureCmd = wardCmd
+  .command('exposure')
+  .description('Exposure scanner commands')
+
+exposureCmd
+  .command('list')
+  .description('List monitored agents')
+  .action(() => {
+    const scanner = new ExposureScanner()
+    const agents = scanner.getAgents()
+
+    console.log(chalk.bold('\nMonitored Agent Signatures:\n'))
+    for (const agent of agents) {
+      console.log(`  ${chalk.cyan(agent.name)}`)
+      console.log(chalk.dim(`    Processes: ${agent.processNames.join(', ')}`))
+      console.log(chalk.dim(`    Ports: ${agent.defaultPorts.join(', ')}`))
+      console.log()
+    }
+  })
+
+exposureCmd
+  .command('scan')
+  .description('Run immediate exposure scan')
+  .action(async () => {
+    const scanner = new ExposureScanner()
+    const results = await scanner.scan()
+
+    console.log(chalk.bold('\nExposure Scan Results:\n'))
+
+    if (results.length === 0) {
+      console.log(chalk.green('  ✓ No exposures detected'))
+    } else {
+      for (const r of results) {
+        const color = r.severity === 'critical' ? chalk.bgRed.white :
+                      r.severity === 'high' ? chalk.red :
+                      r.severity === 'medium' ? chalk.yellow : chalk.green
+        console.log(`  ${color(r.severity.toUpperCase().padEnd(10))} ${r.message}`)
+      }
+    }
+    console.log()
+  })
+
+wardCmd
+  .command('blocked')
+  .description('Show pending blocked egress items')
+  .action(() => {
+    const monitor = new EgressMonitor()
+    const pending = monitor.getPendingBlocks()
+
+    console.log(chalk.bold('\nPending Egress Blocks:\n'))
+
+    if (pending.length === 0) {
+      console.log(chalk.dim('  No pending blocks'))
+    } else {
+      for (const block of pending) {
+        const severityColor = block.pattern.severity === 'critical' ? chalk.bgRed.white :
+                              block.pattern.severity === 'high' ? chalk.red :
+                              block.pattern.severity === 'medium' ? chalk.yellow : chalk.dim
+        console.log(`  ${chalk.cyan(block.id)} ${severityColor(block.pattern.severity.toUpperCase())}`)
+        console.log(chalk.dim(`    Pattern: ${block.pattern.name} (${block.pattern.category})`))
+        console.log(chalk.dim(`    Matched: ${block.matchedText.substring(0, 50)}${block.matchedText.length > 50 ? '...' : ''}`))
+        if (block.connector) console.log(chalk.dim(`    Connector: ${block.connector}`))
+        if (block.destination) console.log(chalk.dim(`    Destination: ${block.destination}`))
+        console.log()
+      }
+      console.log(chalk.dim(`  Use 'bashbros ward approve <id>' or 'bashbros ward deny <id>' to resolve`))
+    }
+    console.log()
+  })
+
+wardCmd
+  .command('approve <id>')
+  .description('Approve a blocked egress item')
+  .option('--by <name>', 'Name of approver', 'user')
+  .action((id, options) => {
+    const monitor = new EgressMonitor()
+    monitor.approveBlock(id, options.by)
+    console.log(chalk.green('✓'), `Approved block ${id}`)
+  })
+
+wardCmd
+  .command('deny <id>')
+  .description('Deny a blocked egress item')
+  .action((id) => {
+    const monitor = new EgressMonitor()
+    monitor.denyBlock(id)
+    console.log(chalk.green('✓'), `Denied block ${id}`)
+  })
+
+const patternsCmd = wardCmd
+  .command('patterns')
+  .description('Egress pattern detection commands')
+
+patternsCmd
+  .command('list')
+  .description('List active detection patterns')
+  .option('--category <cat>', 'Filter by category (credentials, pii)')
+  .action((options) => {
+    const matcher = new EgressPatternMatcher()
+    let patterns = matcher.getPatterns()
+
+    if (options.category) {
+      patterns = patterns.filter(p => p.category === options.category)
+    }
+
+    console.log(chalk.bold('\nActive Egress Patterns:\n'))
+
+    const byCategory: Record<string, typeof patterns> = {}
+    for (const p of patterns) {
+      const cat = p.category
+      if (!byCategory[cat]) byCategory[cat] = []
+      byCategory[cat].push(p)
+    }
+
+    for (const [category, categoryPatterns] of Object.entries(byCategory)) {
+      console.log(chalk.cyan(`  ${category.toUpperCase()}`))
+      for (const p of categoryPatterns) {
+        const severityColor = p.severity === 'critical' ? chalk.red :
+                              p.severity === 'high' ? chalk.yellow :
+                              p.severity === 'medium' ? chalk.blue : chalk.dim
+        const actionColor = p.action === 'block' ? chalk.red :
+                           p.action === 'alert' ? chalk.yellow : chalk.dim
+        console.log(`    ${chalk.bold(p.name.padEnd(16))} ${severityColor(p.severity.padEnd(10))} ${actionColor(p.action.padEnd(6))} ${p.description}`)
+      }
+      console.log()
+    }
+  })
+
+patternsCmd
+  .command('test <text>')
+  .description('Test if text matches any detection pattern')
+  .action((text) => {
+    const monitor = new EgressMonitor()
+    const result = monitor.test(text)
+
+    console.log(chalk.bold('\nPattern Test Results:\n'))
+
+    if (result.matches.length === 0) {
+      console.log(chalk.green('  ✓ No patterns matched'))
+    } else {
+      console.log(`  ${result.blocked ? chalk.red('WOULD BLOCK') : chalk.yellow('WOULD ALERT')}`)
+      console.log()
+      console.log(chalk.bold('  Matches:'))
+      for (const m of result.matches) {
+        const severityColor = m.pattern.severity === 'critical' ? chalk.red :
+                              m.pattern.severity === 'high' ? chalk.yellow :
+                              m.pattern.severity === 'medium' ? chalk.blue : chalk.dim
+        console.log(`    ${chalk.cyan(m.pattern.name)} ${severityColor(`[${m.pattern.severity}]`)} - "${m.matchedText.substring(0, 30)}${m.matchedText.length > 30 ? '...' : ''}"`)
+      }
+      console.log()
+      console.log(chalk.bold('  Redacted output:'))
+      console.log(chalk.dim(`    ${result.redacted.substring(0, 100)}${result.redacted.length > 100 ? '...' : ''}`))
+    }
     console.log()
   })
 

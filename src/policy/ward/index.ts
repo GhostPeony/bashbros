@@ -1,0 +1,5 @@
+export * from './types.js'
+export { ExposureScanner, DEFAULT_AGENT_SIGNATURES } from './exposure.js'
+export { EgressPatternMatcher, DEFAULT_PATTERNS } from './patterns.js'
+export { EgressMonitor } from './egress.js'
+export type { InspectionResult } from './egress.js'

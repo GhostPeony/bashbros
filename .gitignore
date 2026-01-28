@@ -29,6 +29,9 @@ coverage/
 # BashBros local config (user-specific)
 .bashbros.yml
 
+# Git worktrees
+.worktrees/
+
 # Package manager locks (keep package-lock.json for npm)
 yarn.lock
 pnpm-lock.yaml
