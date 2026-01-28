@@ -102,6 +102,12 @@ Detects patterns including:
 - Bearer tokens
 - Generic API keys and passwords
 
+## Known Issues
+
+**Hook not firing (v0.1.0)**: The `tool_result_persist` event that this hook listens to is not being emitted by Moltbot in our testing. The hook installs and registers correctly, but never receives events. We've [reported this issue](https://github.com/clawdbot/clawdbot/issues) and will update once resolved.
+
+Until fixed, use [@bashbros/moltbot-sync](https://github.com/GhostPeony/bashbros/tree/main/packages/moltbot-sync) for pre-execution security via exec-approvals.
+
 ## Limitations
 
 This hook runs **after** command execution via `tool_result_persist`, so it:

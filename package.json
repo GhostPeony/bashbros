@@ -8,6 +8,11 @@
   "bin": {
     "bashbros": "dist/cli.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup && npm run copy-static",
     "copy-static": "node -e \"const fs=require('fs');fs.mkdirSync('dist/static',{recursive:true});fs.cpSync('src/dashboard/static','dist/static',{recursive:true})\"",

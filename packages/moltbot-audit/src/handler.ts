@@ -168,14 +168,9 @@ async function writeAuditEntry(entry: AuditEntry): Promise<void> {
 }
 
 /**
- * Main hook handler for tool_result_persist events
+ * Process tool result event (async, fire-and-forget)
  */
-const bashbrosAudit = async (event: ToolResultPersistEvent): Promise<void> => {
-  // Only process tool_result_persist events
-  if (event.type !== 'tool_result_persist') {
-    return
-  }
-
+async function processToolResult(event: ToolResultPersistEvent): Promise<void> {
   // Extract command from tool input
   const command = extractCommand(event.toolName, event.toolInput)
   if (!command) {
@@ -223,6 +218,26 @@ const bashbrosAudit = async (event: ToolResultPersistEvent): Promise<void> => {
   } catch (err) {
     console.error('[bashbros-audit] Error processing event:', err instanceof Error ? err.message : String(err))
   }
+}
+
+/**
+ * Main hook handler for tool_result_persist events
+ * Must be synchronous per moltbot hook requirements
+ * Spawns async audit work without blocking
+ */
+const bashbrosAudit = (event: ToolResultPersistEvent): void => {
+  // Only process tool_result_persist events
+  if (event.type !== 'tool_result_persist') {
+    return
+  }
+
+  // Fire-and-forget async processing
+  processToolResult(event).catch(err => {
+    console.error('[bashbros-audit] Unhandled error:', err instanceof Error ? err.message : String(err))
+  })
+
+  // Return undefined to keep original payload
+  return undefined
 }
 
 export default bashbrosAudit

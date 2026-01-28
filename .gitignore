@@ -10,6 +10,9 @@ dist/
 *.swp
 *.swo
 
+# Claude Code settings (user-specific)
+.claude/settings.local.json
+
 # OS files
 .DS_Store
 Thumbs.db

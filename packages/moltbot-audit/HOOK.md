@@ -4,7 +4,7 @@ description: "BashBros audit logging and output scanning for Moltbot"
 homepage: https://github.com/GhostPeony/bashbros/tree/main/packages/moltbot-audit
 metadata:
   {
-    "moltbot":
+    "clawdbot":
       {
         "emoji": "🛡️",
         "events": ["tool_result_persist"],
