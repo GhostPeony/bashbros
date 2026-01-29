@@ -1,4 +1,5 @@
 # BashBros
+![bashbros](https://github.com/user-attachments/assets/766502da-f31d-4304-a4dc-7f0a1845335f)
 
 ```
        /____            _     ____
