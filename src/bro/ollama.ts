@@ -20,6 +20,34 @@ export interface GenerateResponse {
   context?: number[]
 }
 
+export interface ModelInfo {
+  modelfile: string
+  parameters: string
+  template: string
+  details: {
+    parent_model: string
+    format: string
+    family: string
+    families: string[]
+    parameter_size: string
+    quantization_level: string
+  }
+}
+
+export interface RunningModel {
+  name: string
+  model: string
+  size: number
+  size_vram: number
+  digest: string
+  details: {
+    family: string
+    parameter_size: string
+    quantization_level: string
+  }
+  expires_at: string
+}
+
 const DEFAULT_CONFIG: OllamaConfig = {
   host: 'http://localhost:11434',
   model: 'qwen2.5-coder:7b',
@@ -200,6 +228,109 @@ Respond with ONLY the fixed command, no explanation. If you can't fix it, respon
       return fixed
     } catch {
       return null
+    }
+  }
+
+  /**
+   * Show detailed info about a model
+   */
+  async showModel(name: string): Promise<ModelInfo | null> {
+    try {
+      const response = await fetch(`${this.config.host}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
+
+      if (!response.ok) {
+        return null
+      }
+
+      const data = await response.json() as ModelInfo
+      return data
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Delete a model
+   */
+  async deleteModel(name: string): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.config.host}/api/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })
+
+      return response.ok
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * List currently running models
+   */
+  async listRunning(): Promise<RunningModel[]> {
+    try {
+      const response = await fetch(`${this.config.host}/api/ps`)
+
+      if (!response.ok) {
+        return []
+      }
+
+      const data = await response.json() as { models?: RunningModel[] }
+      return data.models || []
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Pull a model from the registry
+   */
+  async pullModel(name: string): Promise<boolean> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 300000) // 5 minutes
+
+    try {
+      const response = await fetch(`${this.config.host}/api/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, stream: false }),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeout)
+      return response.ok
+    } catch {
+      clearTimeout(timeout)
+      return false
+    }
+  }
+
+  /**
+   * Create a model from a Modelfile
+   */
+  async createModel(name: string, modelfile: string): Promise<boolean> {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 120000) // 2 minutes
+
+    try {
+      const response = await fetch(`${this.config.host}/api/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, modelfile, stream: false }),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeout)
+      return response.ok
+    } catch {
+      clearTimeout(timeout)
+      return false
     }
   }
 

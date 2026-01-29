@@ -465,4 +465,262 @@ describe('OllamaClient', () => {
       expect(result).toBeNull()
     })
   })
+
+  describe('showModel', () => {
+    it('returns model info on success', async () => {
+      const mockFetch = vi.mocked(fetch)
+      const modelInfo = {
+        modelfile: 'FROM llama2',
+        parameters: 'num_ctx 4096',
+        template: '{{ .Prompt }}',
+        details: {
+          parent_model: '',
+          format: 'gguf',
+          family: 'llama',
+          families: ['llama'],
+          parameter_size: '7B',
+          quantization_level: 'Q4_0'
+        }
+      }
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => modelInfo
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.showModel('llama2')
+
+      expect(result).toEqual(modelInfo)
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:11434/api/show',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'llama2' })
+        })
+      )
+    })
+
+    it('returns null on non-ok response', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.showModel('nonexistent')
+
+      expect(result).toBeNull()
+    })
+
+    it('returns null on network error', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockRejectedValueOnce(new Error('Connection refused'))
+
+      const client = new OllamaClient()
+      const result = await client.showModel('llama2')
+
+      expect(result).toBeNull()
+    })
+  })
+
+  describe('deleteModel', () => {
+    it('returns true on successful delete', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: true
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.deleteModel('llama2')
+
+      expect(result).toBe(true)
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:11434/api/delete',
+        expect.objectContaining({
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'llama2' })
+        })
+      )
+    })
+
+    it('returns false on non-ok response', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.deleteModel('nonexistent')
+
+      expect(result).toBe(false)
+    })
+
+    it('returns false on network error', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockRejectedValueOnce(new Error('Connection refused'))
+
+      const client = new OllamaClient()
+      const result = await client.deleteModel('llama2')
+
+      expect(result).toBe(false)
+    })
+  })
+
+  describe('listRunning', () => {
+    it('returns running models', async () => {
+      const mockFetch = vi.mocked(fetch)
+      const runningModels = [
+        {
+          name: 'llama2:latest',
+          model: 'llama2:latest',
+          size: 3825819519,
+          size_vram: 3825819519,
+          digest: 'abc123',
+          details: {
+            family: 'llama',
+            parameter_size: '7B',
+            quantization_level: 'Q4_0'
+          },
+          expires_at: '2024-06-04T14:38:31.83753-07:00'
+        }
+      ]
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ models: runningModels })
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.listRunning()
+
+      expect(result).toEqual(runningModels)
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:11434/api/ps'
+      )
+    })
+
+    it('returns empty array on non-ok response', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.listRunning()
+
+      expect(result).toEqual([])
+    })
+
+    it('returns empty array on network error', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockRejectedValueOnce(new Error('Connection refused'))
+
+      const client = new OllamaClient()
+      const result = await client.listRunning()
+
+      expect(result).toEqual([])
+    })
+  })
+
+  describe('pullModel', () => {
+    it('returns true on successful pull', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'success' })
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.pullModel('llama2')
+
+      expect(result).toBe(true)
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:11434/api/pull',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'llama2', stream: false }),
+          signal: expect.any(AbortSignal)
+        })
+      )
+    })
+
+    it('returns false on non-ok response', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.pullModel('nonexistent')
+
+      expect(result).toBe(false)
+    })
+
+    it('returns false on network error', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockRejectedValueOnce(new Error('Connection error'))
+
+      const client = new OllamaClient()
+      const result = await client.pullModel('llama2')
+
+      expect(result).toBe(false)
+    })
+  })
+
+  describe('createModel', () => {
+    it('returns true on successful create', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: 'success' })
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.createModel('mymodel', 'FROM llama2\nSYSTEM You are helpful.')
+
+      expect(result).toBe(true)
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:11434/api/create',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'mymodel',
+            modelfile: 'FROM llama2\nSYSTEM You are helpful.',
+            stream: false
+          }),
+          signal: expect.any(AbortSignal)
+        })
+      )
+    })
+
+    it('returns false on non-ok response', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400
+      } as Response)
+
+      const client = new OllamaClient()
+      const result = await client.createModel('bad', 'invalid modelfile')
+
+      expect(result).toBe(false)
+    })
+
+    it('returns false on network error', async () => {
+      const mockFetch = vi.mocked(fetch)
+      mockFetch.mockRejectedValueOnce(new Error('Connection refused'))
+
+      const client = new OllamaClient()
+      const result = await client.createModel('mymodel', 'FROM llama2')
+
+      expect(result).toBe(false)
+    })
+  })
 })
