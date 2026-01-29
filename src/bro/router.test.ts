@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { TaskRouter } from './router.js'
+import type { SystemProfile } from './profiler.js'
 
 describe('TaskRouter', () => {
   describe('simple commands -> bro', () => {
@@ -196,9 +197,9 @@ describe('TaskRouter', () => {
         platform: 'linux',
         arch: 'x64',
         shell: 'bash',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(),
         projectType: 'python'
-      })
+      } as SystemProfile)
 
       expect(router.route('python -c "print(1)"').decision).toBe('bro')
       expect(router.route('pip install requests').decision).toBe('bro')
@@ -210,12 +211,50 @@ describe('TaskRouter', () => {
         platform: 'linux',
         arch: 'x64',
         shell: 'bash',
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(),
         projectType: 'node'
-      })
+      } as SystemProfile)
 
       expect(router.route('npx prettier --write').decision).toBe('bro')
       expect(router.route('npm install lodash').decision).toBe('bro')
+    })
+  })
+
+  describe('AI-enhanced routing', () => {
+    it('uses AI fallback for ambiguous commands when ollama provided', async () => {
+      const mockOllama = {
+        generate: vi.fn().mockResolvedValue('bro'),
+        getModel: vi.fn().mockReturnValue('test-model')
+      }
+      const router = new TaskRouter(null, mockOllama as any)
+      const result = await router.routeAsync('some ambiguous command with pipes | and stuff')
+      expect(result.decision).toBeDefined()
+      expect(result.confidence).toBeGreaterThan(0)
+    })
+
+    it('falls back to main when AI is unavailable', async () => {
+      const mockOllama = {
+        generate: vi.fn().mockRejectedValue(new Error('timeout')),
+        getModel: vi.fn().mockReturnValue('test-model')
+      }
+      const router = new TaskRouter(null, mockOllama as any)
+      const result = await router.routeAsync('ambiguous command here')
+      expect(result.decision).toBe('main')
+      expect(result.reason).toContain('fallback')
+    })
+
+    it('still uses patterns first (fast path)', async () => {
+      const mockOllama = { generate: vi.fn(), getModel: vi.fn() }
+      const router = new TaskRouter(null, mockOllama as any)
+      const result = await router.routeAsync('git status')
+      expect(result.decision).toBe('bro')
+      expect(mockOllama.generate).not.toHaveBeenCalled()
+    })
+
+    it('works without ollama (sync-only)', async () => {
+      const router = new TaskRouter()
+      const result = await router.routeAsync('git status')
+      expect(result.decision).toBe('bro')
     })
   })
 })

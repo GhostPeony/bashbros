@@ -377,13 +377,67 @@ export async function gateCommand(command: string): Promise<{
     }
   }
 
-  // Block critical risk commands
-  if (risk.level === 'critical') {
-    return {
-      allowed: false,
-      reason: `Critical risk: ${risk.factors.join(', ')}`,
-      riskScore: risk.score
+  // Config-driven risk threshold checks
+  if (config.riskScoring.enabled) {
+    if (risk.score >= config.riskScoring.blockThreshold) {
+      return {
+        allowed: false,
+        reason: `Risk score ${risk.score} >= block threshold ${config.riskScoring.blockThreshold}: ${risk.factors.join(', ')}`,
+        riskScore: risk.score
+      }
     }
+    if (risk.score >= config.riskScoring.warnThreshold) {
+      process.stderr.write(`[BashBros] Warning: risk score ${risk.score} (${risk.factors.join(', ')})\n`)
+    }
+  }
+
+  // DB-backed cross-process checks (fail-open: DB errors never block commands)
+  try {
+    const { join } = await import('path')
+    const { homedir } = await import('os')
+    const { DashboardDB } = await import('../dashboard/db.js')
+    const { checkLoopDetection, checkAnomalyDetection, checkRateLimit } = await import('../policy/db-checks.js')
+
+    const dbPath = join(homedir(), '.bashbros', 'dashboard.db')
+    const db = new DashboardDB(dbPath)
+    try {
+      // Loop detection
+      if (config.loopDetection.enabled) {
+        const loop = checkLoopDetection(command, config.loopDetection, db)
+        if (loop.violation) {
+          db.close()
+          return { allowed: false, reason: loop.violation.message, riskScore: risk.score }
+        }
+        if (loop.warning) {
+          process.stderr.write(`[BashBros] ${loop.warning}\n`)
+        }
+      }
+
+      // Anomaly detection
+      if (config.anomalyDetection.enabled) {
+        const anomaly = checkAnomalyDetection(command, config.anomalyDetection, db)
+        if (anomaly.violation) {
+          db.close()
+          return { allowed: false, reason: anomaly.violation.message, riskScore: risk.score }
+        }
+        if (anomaly.warning) {
+          process.stderr.write(`[BashBros] ${anomaly.warning}\n`)
+        }
+      }
+
+      // Rate limiting
+      if (config.rateLimit.enabled) {
+        const rate = checkRateLimit(config.rateLimit, db)
+        if (rate.violation) {
+          db.close()
+          return { allowed: false, reason: rate.violation.message, riskScore: risk.score }
+        }
+      }
+    } finally {
+      db.close()
+    }
+  } catch {
+    // Fail-open: DB errors never block commands
   }
 
   return {

@@ -22,6 +22,7 @@ export type AgentType =
   | 'clawdbot'    // Keep for backward compatibility
   | 'moltbot'     // New canonical name for clawd.bot
   | 'gemini-cli'
+  | 'copilot-cli'
   | 'aider'
   | 'opencode'
   | 'custom'
@@ -144,7 +145,7 @@ export interface CommandResult {
 }
 
 export interface PolicyViolation {
-  type: 'command' | 'path' | 'secrets' | 'rate_limit'
+  type: 'command' | 'path' | 'secrets' | 'rate_limit' | 'risk_score' | 'loop' | 'anomaly' | 'output'
   rule: string
   message: string
 }

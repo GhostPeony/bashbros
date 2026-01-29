@@ -1,4 +1,5 @@
 import type { SystemProfile } from './profiler.js'
+import type { OllamaClient } from './ollama.js'
 
 export type RouteDecision = 'bro' | 'main' | 'both'
 
@@ -17,9 +18,11 @@ export interface RoutingResult {
 export class TaskRouter {
   private rules: RoutingRule[]
   private profile: SystemProfile | null
+  private ollama: OllamaClient | null
 
-  constructor(profile: SystemProfile | null = null) {
+  constructor(profile: SystemProfile | null = null, ollama: OllamaClient | null = null) {
     this.profile = profile
+    this.ollama = ollama
     this.rules = this.buildDefaultRules()
   }
 
@@ -112,6 +115,34 @@ export class TaskRouter {
       reason: 'Complex or unknown command',
       confidence: 0.5
     }
+  }
+
+  async routeAsync(command: string): Promise<RoutingResult> {
+    // Fast path: pattern match
+    const patternResult = this.route(command)
+    if (patternResult.confidence >= 0.7) {
+      return patternResult
+    }
+
+    // AI fallback for ambiguous commands
+    if (!this.ollama) {
+      return patternResult
+    }
+
+    try {
+      const prompt = `Classify this command as one of: bro (simple, local task), main (complex, needs reasoning), both (can run in background). Command: "${command}". Respond with ONLY one word: bro, main, or both.`
+
+      const response = await this.ollama.generate(prompt, 'You are a command classifier. Respond with exactly one word: bro, main, or both.')
+
+      const decision = response.trim().toLowerCase() as RouteDecision
+      if (['bro', 'main', 'both'].includes(decision)) {
+        return { decision, reason: 'AI classification', confidence: 0.8 }
+      }
+    } catch {
+      // AI unavailable - fallback
+    }
+
+    return { decision: 'main', reason: 'AI fallback - defaulting to main', confidence: 0.5 }
   }
 
   private looksSimple(command: string): boolean {

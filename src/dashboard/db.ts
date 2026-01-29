@@ -83,6 +83,7 @@ export interface SessionRecord {
   blockedCount: number
   avgRiskScore: number
   workingDir: string
+  repoName: string | null
 }
 
 export interface CommandRecord {
@@ -96,6 +97,7 @@ export interface CommandRecord {
   riskFactors: string[]
   durationMs: number
   violations: string[]
+  repoName?: string | null
 }
 
 export interface BroEventRecord {
@@ -137,10 +139,11 @@ export interface InsertSessionInput {
   agent: string
   pid: number
   workingDir: string
+  repoName?: string | null
 }
 
 export interface InsertCommandInput {
-  sessionId: string
+  sessionId?: string
   command: string
   allowed: boolean
   riskScore: number
@@ -168,6 +171,24 @@ export interface InsertBroStatusInput {
   projectType?: string
 }
 
+export interface InsertAdapterEventInput {
+  adapterName: string
+  baseModel: string
+  purpose: string
+  action: 'activated' | 'deactivated' | 'created' | 'deleted'
+  success: boolean
+}
+
+export interface AdapterEventRecord {
+  id: string
+  timestamp: Date
+  adapterName: string
+  baseModel: string
+  purpose: string
+  action: string
+  success: boolean
+}
+
 export interface InsertToolUseInput {
   toolName: string
   toolInput: string
@@ -177,10 +198,12 @@ export interface InsertToolUseInput {
   cwd: string
   repoName?: string | null
   repoPath?: string | null
+  sessionId?: string
 }
 
 export interface ToolUseFilter {
   toolName?: string
+  sessionId?: string
   since?: Date
   limit?: number
   offset?: number
@@ -306,7 +329,7 @@ export class DashboardDB {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS commands (
         id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
+        session_id TEXT,
         timestamp TEXT NOT NULL,
         command TEXT NOT NULL,
         allowed INTEGER NOT NULL,
@@ -318,6 +341,9 @@ export class DashboardDB {
         FOREIGN KEY (session_id) REFERENCES sessions(id)
       )
     `)
+
+    // Migration: relax session_id NOT NULL for hook-mode recording
+    this.migrateCommandsNullableSessionId()
 
     // Bash Bro events table - AI activity log
     this.db.exec(`
@@ -364,6 +390,24 @@ export class DashboardDB {
       )
     `)
 
+    // Adapter events table - track adapter activations
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS adapter_events (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        adapter_name TEXT NOT NULL,
+        base_model TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        action TEXT NOT NULL,
+        success INTEGER NOT NULL
+      )
+    `)
+
+    // Migrations for multi-session support
+    this.migrateToolUsesAddSessionId()
+    this.migrateSessionsAddMode()
+    this.migrateSessionsAddRepoName()
+
     // Create indexes for new tables
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
@@ -376,6 +420,8 @@ export class DashboardDB {
       CREATE INDEX IF NOT EXISTS idx_bro_status_timestamp ON bro_status(timestamp);
       CREATE INDEX IF NOT EXISTS idx_tool_uses_timestamp ON tool_uses(timestamp);
       CREATE INDEX IF NOT EXISTS idx_tool_uses_tool_name ON tool_uses(tool_name);
+      CREATE INDEX IF NOT EXISTS idx_tool_uses_session_id ON tool_uses(session_id);
+      CREATE INDEX IF NOT EXISTS idx_adapter_events_timestamp ON adapter_events(timestamp);
     `)
   }
 
@@ -725,11 +771,11 @@ export class DashboardDB {
     const startTime = new Date().toISOString()
 
     const stmt = this.db.prepare(`
-      INSERT INTO sessions (id, agent, pid, start_time, status, command_count, blocked_count, avg_risk_score, working_dir)
-      VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?)
+      INSERT INTO sessions (id, agent, pid, start_time, status, command_count, blocked_count, avg_risk_score, working_dir, repo_name)
+      VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?, ?)
     `)
 
-    stmt.run(id, input.agent, input.pid, startTime, input.workingDir)
+    stmt.run(id, input.agent, input.pid, startTime, input.workingDir, input.repoName ?? null)
     return id
   }
 
@@ -862,6 +908,61 @@ export class DashboardDB {
     return this.rowToSession(row)
   }
 
+  /**
+   * Insert a session with an externally-provided ID (for hook-mode sessions).
+   * Uses INSERT OR IGNORE for race-safe concurrent hook calls.
+   */
+  insertSessionWithId(id: string, input: InsertSessionInput & { mode?: string }): string {
+    const startTime = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO sessions (id, agent, pid, start_time, status, command_count, blocked_count, avg_risk_score, working_dir, mode, repo_name)
+      VALUES (?, ?, ?, ?, 'active', 0, 0, 0, ?, ?, ?)
+    `)
+
+    stmt.run(id, input.agent, input.pid, startTime, input.workingDir, input.mode ?? 'hook', input.repoName ?? null)
+    return id
+  }
+
+  /**
+   * Get ALL active sessions, ordered by start_time DESC.
+   * Used by the multi-session dashboard.
+   */
+  getActiveSessions(): SessionRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM sessions WHERE status = 'active' ORDER BY start_time DESC
+    `)
+    const rows = stmt.all() as Array<{
+      id: string
+      agent: string
+      pid: number
+      start_time: string
+      end_time: string | null
+      status: 'active' | 'completed' | 'crashed'
+      command_count: number
+      blocked_count: number
+      avg_risk_score: number
+      working_dir: string
+    }>
+
+    return rows.map(row => this.rowToSession(row))
+  }
+
+  /**
+   * Atomically increment session counters in a single UPDATE.
+   * Race-safe for concurrent hook processes (SQLite serializes writes).
+   */
+  incrementSessionCommand(id: string, blocked: boolean, riskScore: number): void {
+    const stmt = this.db.prepare(`
+      UPDATE sessions SET
+        command_count = command_count + 1,
+        blocked_count = blocked_count + ?,
+        avg_risk_score = (avg_risk_score * command_count + ?) / (command_count + 1)
+      WHERE id = ?
+    `)
+    stmt.run(blocked ? 1 : 0, riskScore, id)
+  }
+
   private rowToSession(row: {
     id: string
     agent: string
@@ -873,6 +974,7 @@ export class DashboardDB {
     blocked_count: number
     avg_risk_score: number
     working_dir: string
+    repo_name?: string | null
   }): SessionRecord {
     return {
       id: row.id,
@@ -884,7 +986,8 @@ export class DashboardDB {
       commandCount: row.command_count,
       blockedCount: row.blocked_count,
       avgRiskScore: row.avg_risk_score,
-      workingDir: row.working_dir
+      workingDir: row.working_dir,
+      repoName: row.repo_name ?? null
     }
   }
 
@@ -903,7 +1006,7 @@ export class DashboardDB {
 
     stmt.run(
       id,
-      input.sessionId,
+      input.sessionId ?? null,
       timestamp,
       input.command,
       input.allowed ? 1 : 0,
@@ -976,8 +1079,10 @@ export class DashboardDB {
 
   getLiveCommands(limit: number = 20): CommandRecord[] {
     const stmt = this.db.prepare(`
-      SELECT * FROM commands
-      ORDER BY timestamp DESC
+      SELECT c.*, s.repo_name, s.working_dir
+      FROM commands c
+      LEFT JOIN sessions s ON c.session_id = s.id
+      ORDER BY c.timestamp DESC
       LIMIT ?
     `)
 
@@ -992,9 +1097,14 @@ export class DashboardDB {
       risk_factors: string
       duration_ms: number
       violations: string
+      repo_name: string | null
+      working_dir: string | null
     }>
 
-    return rows.map(row => this.rowToCommand(row))
+    return rows.map(row => ({
+      ...this.rowToCommand(row),
+      repoName: row.repo_name ?? (row.working_dir ? row.working_dir.split(/[/\\]/).pop() ?? null : null)
+    }))
   }
 
   private rowToCommand(row: {
@@ -1152,6 +1262,52 @@ export class DashboardDB {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Adapter Events
+  // ─────────────────────────────────────────────────────────────
+
+  insertAdapterEvent(input: InsertAdapterEventInput): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+
+    const stmt = this.db.prepare(`
+      INSERT INTO adapter_events (id, timestamp, adapter_name, base_model, purpose, action, success)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    stmt.run(
+      id,
+      timestamp,
+      input.adapterName,
+      input.baseModel,
+      input.purpose,
+      input.action,
+      input.success ? 1 : 0
+    )
+
+    return id
+  }
+
+  getAdapterEvents(limit: number = 50): AdapterEventRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM adapter_events
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `)
+
+    const rows = stmt.all(limit) as any[]
+
+    return rows.map(row => ({
+      id: row.id,
+      timestamp: new Date(row.timestamp),
+      adapterName: row.adapter_name,
+      baseModel: row.base_model,
+      purpose: row.purpose,
+      action: row.action,
+      success: row.success === 1
+    }))
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Tool Uses
   // ─────────────────────────────────────────────────────────────
 
@@ -1160,8 +1316,8 @@ export class DashboardDB {
     const timestamp = new Date().toISOString()
 
     const stmt = this.db.prepare(`
-      INSERT INTO tool_uses (id, timestamp, tool_name, tool_input, tool_output, exit_code, success, cwd, repo_name, repo_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tool_uses (id, timestamp, tool_name, tool_input, tool_output, exit_code, success, cwd, repo_name, repo_path, session_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     stmt.run(
@@ -1174,7 +1330,8 @@ export class DashboardDB {
       input.success === undefined ? null : (input.success ? 1 : 0),
       input.cwd,
       input.repoName ?? null,
-      input.repoPath ?? null
+      input.repoPath ?? null,
+      input.sessionId ?? null
     )
 
     return id
@@ -1187,6 +1344,10 @@ export class DashboardDB {
     if (filter.toolName) {
       conditions.push('tool_name = ?')
       params.push(filter.toolName)
+    }
+    if (filter.sessionId) {
+      conditions.push('session_id = ?')
+      params.push(filter.sessionId)
     }
     if (filter.since) {
       conditions.push('timestamp >= ?')
@@ -1322,6 +1483,103 @@ export class DashboardDB {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Security Summary
+  // ─────────────────────────────────────────────────────────────
+
+  getSecuritySummary(): {
+    totalCommands24h: number
+    blockedCount24h: number
+    avgRiskScore24h: number
+    riskDistribution: Record<string, number>
+    violationTypes: Array<{ type: string; count: number }>
+    highRiskCount24h: number
+  } {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+    // Total commands in last 24h
+    const totalRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE timestamp >= ?
+    `).get(oneDayAgo) as { count: number }
+
+    // Blocked count in last 24h
+    const blockedRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE timestamp >= ? AND allowed = 0
+    `).get(oneDayAgo) as { count: number }
+
+    // Average risk score in last 24h
+    const avgRow = this.db.prepare(`
+      SELECT AVG(risk_score) as avg FROM commands WHERE timestamp >= ?
+    `).get(oneDayAgo) as { avg: number | null }
+
+    // Risk distribution in last 24h
+    const riskRows = this.db.prepare(`
+      SELECT risk_level, COUNT(*) as count FROM commands WHERE timestamp >= ? GROUP BY risk_level
+    `).all(oneDayAgo) as Array<{ risk_level: string; count: number }>
+
+    const riskDistribution: Record<string, number> = {}
+    for (const row of riskRows) {
+      riskDistribution[row.risk_level] = row.count
+    }
+
+    // High risk count (dangerous + critical)
+    const highRiskRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE timestamp >= ? AND risk_level IN ('dangerous', 'critical')
+    `).get(oneDayAgo) as { count: number }
+
+    // Violation types from blocked commands
+    const violationRows = this.db.prepare(`
+      SELECT violations FROM commands WHERE timestamp >= ? AND allowed = 0 AND violations != '[]'
+    `).all(oneDayAgo) as Array<{ violations: string }>
+
+    const typeCounts: Record<string, number> = {}
+    for (const row of violationRows) {
+      try {
+        const violations = JSON.parse(row.violations) as string[]
+        for (const v of violations) {
+          const type = v.includes(':') ? v.split(':')[0] : v
+          typeCounts[type] = (typeCounts[type] || 0) + 1
+        }
+      } catch {
+        // skip malformed JSON
+      }
+    }
+
+    const violationTypes = Object.entries(typeCounts)
+      .map(([type, count]) => ({ type, count }))
+      .sort((a, b) => b.count - a.count)
+
+    return {
+      totalCommands24h: totalRow.count,
+      blockedCount24h: blockedRow.count,
+      avgRiskScore24h: avgRow.avg ?? 0,
+      riskDistribution,
+      violationTypes,
+      highRiskCount24h: highRiskRow.count
+    }
+  }
+
+  getBlockedCommandsRecent(limit: number = 25): CommandRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM commands WHERE allowed = 0 ORDER BY timestamp DESC LIMIT ?
+    `)
+
+    const rows = stmt.all(limit) as Array<{
+      id: string
+      session_id: string
+      timestamp: string
+      command: string
+      allowed: number
+      risk_score: number
+      risk_level: 'safe' | 'caution' | 'dangerous' | 'critical'
+      risk_factors: string
+      duration_ms: number
+      violations: string
+    }>
+
+    return rows.map(row => this.rowToCommand(row))
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Stats
   // ─────────────────────────────────────────────────────────────
 
@@ -1410,6 +1668,31 @@ export class DashboardDB {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Cross-process Query Helpers (for db-checks)
+  // ─────────────────────────────────────────────────────────────
+
+  getRecentCommandTexts(windowSize: number): { command: string; timestamp: string }[] {
+    const stmt = this.db.prepare(`
+      SELECT command, timestamp FROM commands
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `)
+    return stmt.all(windowSize) as { command: string; timestamp: string }[]
+  }
+
+  getCommandCountSince(sinceISO: string): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as count FROM commands WHERE timestamp >= ?
+    `).get(sinceISO) as { count: number }
+    return row.count
+  }
+
+  getTotalCommandCount(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as count FROM commands').get() as { count: number }
+    return row.count
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Maintenance
   // ─────────────────────────────────────────────────────────────
 
@@ -1436,9 +1719,419 @@ export class DashboardDB {
            commandsDeleted + sessionsDeleted + broEventsDeleted + broStatusDeleted + toolUsesDeleted
   }
 
+  /**
+   * Migration: add session_id column to tool_uses table for session tracking
+   */
+  private migrateToolUsesAddSessionId(): void {
+    try {
+      const tableInfo = this.db.pragma('table_info(tool_uses)') as Array<{ name: string }>
+      const hasSessionId = tableInfo.some(col => col.name === 'session_id')
+      if (!hasSessionId) {
+        this.db.exec('ALTER TABLE tool_uses ADD COLUMN session_id TEXT')
+      }
+    } catch {
+      // Table doesn't exist yet or already migrated
+    }
+  }
+
+  /**
+   * Migration: add mode column to sessions table to distinguish watch vs hook sessions
+   */
+  private migrateSessionsAddMode(): void {
+    try {
+      const tableInfo = this.db.pragma('table_info(sessions)') as Array<{ name: string }>
+      const hasMode = tableInfo.some(col => col.name === 'mode')
+      if (!hasMode) {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN mode TEXT DEFAULT 'watch'")
+      }
+    } catch {
+      // Table doesn't exist yet or already migrated
+    }
+  }
+
+  /**
+   * Migration: add repo_name column to sessions table
+   */
+  private migrateSessionsAddRepoName(): void {
+    try {
+      const tableInfo = this.db.pragma('table_info(sessions)') as Array<{ name: string }>
+      const hasRepoName = tableInfo.some(col => col.name === 'repo_name')
+      if (!hasRepoName) {
+        this.db.exec('ALTER TABLE sessions ADD COLUMN repo_name TEXT')
+      }
+    } catch {
+      // Table doesn't exist yet or already migrated
+    }
+  }
+
+  /**
+   * Migration: allow NULL session_id in commands table for hook-mode recording
+   * (each hook invocation is a separate process with no long-running session)
+   */
+  private migrateCommandsNullableSessionId(): void {
+    try {
+      const tableInfo = this.db.pragma('table_info(commands)') as Array<{ name: string; notnull: number }>
+      const sessionCol = tableInfo.find(col => col.name === 'session_id')
+      if (sessionCol && sessionCol.notnull === 1) {
+        this.db.exec(`
+          CREATE TABLE commands_mig (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            timestamp TEXT NOT NULL,
+            command TEXT NOT NULL,
+            allowed INTEGER NOT NULL,
+            risk_score INTEGER NOT NULL,
+            risk_level TEXT NOT NULL,
+            risk_factors TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            violations TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES sessions(id)
+          );
+          INSERT INTO commands_mig SELECT * FROM commands;
+          DROP TABLE commands;
+          ALTER TABLE commands_mig RENAME TO commands;
+          CREATE INDEX IF NOT EXISTS idx_commands_session_id ON commands(session_id);
+          CREATE INDEX IF NOT EXISTS idx_commands_timestamp ON commands(timestamp);
+          CREATE INDEX IF NOT EXISTS idx_commands_allowed ON commands(allowed);
+        `)
+      }
+    } catch {
+      // Table doesn't exist yet or already migrated — no action needed
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Achievement System
+  // ─────────────────────────────────────────────────────────────
+
+  static readonly BADGE_DEFINITIONS: BadgeDefinition[] = [
+    // Volume
+    { id: 'first_blood', name: 'First Blood', description: 'Execute commands', category: 'volume', icon: '\u2694', stat: 'totalCommands', tiers: [1, 100, 1000, 10000, 100000] },
+    { id: 'marathon_runner', name: 'Marathon Runner', description: 'Complete sessions', category: 'volume', icon: '\ud83c\udfc3', stat: 'totalSessions', tiers: [1, 10, 50, 200, 1000] },
+    { id: 'watchdog', name: 'Watchdog', description: 'Time under watch', category: 'volume', icon: '\u23f1', stat: 'totalWatchTimeMinutes', tiers: [60, 1440, 10080, 43200, 525600] },
+    // Security
+    { id: 'shield_bearer', name: 'Shield Bearer', description: 'Threats blocked', category: 'security', icon: '\ud83d\udee1', stat: 'totalBlocked', tiers: [1, 25, 100, 500, 2000] },
+    { id: 'clean_hands', name: 'Clean Hands', description: 'Consecutive clean commands', category: 'security', icon: '\u2728', stat: 'cleanestStreak', tiers: [10, 50, 200, 1000, 5000] },
+    { id: 'risk_taker', name: 'Risk Taker', description: 'High risk commands executed', category: 'security', icon: '\ud83c\udfb2', stat: 'highRiskCount', tiers: [1, 5, 10, 25, 50] },
+    // Agents
+    { id: 'buddy_system', name: 'Buddy System', description: 'Use 2+ agents', category: 'agents', icon: '\ud83e\udd1d', stat: 'uniqueAgents', tiers: [2, 2, 2, 2, 2] },
+    { id: 'squad_up', name: 'Squad Up', description: 'Use multiple agents', category: 'agents', icon: '\ud83d\udc6b', stat: 'uniqueAgents', tiers: [2, 3, 4, 5, 5] },
+    { id: 'loyal', name: 'Loyal', description: '1000 commands from one agent', category: 'agents', icon: '\ud83d\udc51', stat: 'maxAgentCommands', tiers: [100, 250, 500, 1000, 5000] },
+    { id: 'polyglot', name: 'Polyglot', description: '100+ commands from multiple agents', category: 'agents', icon: '\ud83c\udf0d', stat: 'agentsWith100', tiers: [1, 2, 3, 4, 5] },
+    // Behavioral
+    { id: 'night_owl', name: 'Night Owl', description: 'Commands after midnight', category: 'behavioral', icon: '\ud83e\udd89', stat: 'lateNightCount', tiers: [10, 100, 500, 2000, 10000] },
+    { id: 'speed_demon', name: 'Speed Demon', description: 'Commands in a single hour', category: 'behavioral', icon: '\u26a1', stat: 'peakHourCount', tiers: [60, 100, 150, 200, 300] },
+    { id: 'one_liner', name: 'One-Liner', description: 'Longest command (chars)', category: 'behavioral', icon: '\ud83d\udcdd', stat: 'longestCommandLength', tiers: [500, 1000, 2000, 5000, 10000] },
+    { id: 'creature_of_habit', name: 'Creature of Habit', description: 'Same command repeated', category: 'behavioral', icon: '\ud83d\udd01', stat: 'mostUsedCommandCount', tiers: [50, 200, 500, 1000, 5000] },
+    { id: 'explorer', name: 'Explorer', description: 'Unique commands used', category: 'behavioral', icon: '\ud83e\udded', stat: 'uniqueCommands', tiers: [25, 50, 100, 250, 500] },
+    // Repo
+    { id: 'home_base', name: 'Home Base', description: 'Protect a repo', category: 'repo', icon: '\ud83c\udfe0', stat: 'uniqueRepos', tiers: [1, 1, 1, 1, 1] },
+    { id: 'empire', name: 'Empire', description: 'Protect multiple repos', category: 'repo', icon: '\ud83c\udff0', stat: 'uniqueRepos', tiers: [3, 5, 10, 25, 50] },
+  ]
+
+  getAchievementStats(): AchievementStats {
+    // Core totals
+    const totalCommands = (this.db.prepare('SELECT COUNT(*) as c FROM commands').get() as any).c
+    const totalBlocked = (this.db.prepare('SELECT COUNT(*) as c FROM commands WHERE allowed = 0').get() as any).c
+    const totalSessions = (this.db.prepare('SELECT COUNT(*) as c FROM sessions').get() as any).c
+    const totalCharacters = (this.db.prepare('SELECT COALESCE(SUM(LENGTH(command)), 0) as c FROM commands').get() as any).c
+
+    // Watch time in minutes (sum of session durations)
+    const watchTimeRow = this.db.prepare(`
+      SELECT COALESCE(SUM(
+        (julianday(COALESCE(end_time, datetime('now'))) - julianday(start_time)) * 1440
+      ), 0) as minutes FROM sessions
+    `).get() as any
+    const totalWatchTimeMinutes = Math.round(watchTimeRow.minutes)
+
+    // Unique repos
+    const uniqueRepos = (this.db.prepare(`
+      SELECT COUNT(DISTINCT repo_name) as c FROM sessions WHERE repo_name IS NOT NULL AND repo_name != ''
+    `).get() as any).c
+
+    // First command timestamp
+    const firstCommandRow = this.db.prepare('SELECT MIN(timestamp) as t FROM commands').get() as any
+    const memberSince = firstCommandRow.t || null
+
+    // Agent breakdown
+    const agentRows = this.db.prepare(`
+      SELECT s.agent, COUNT(*) as count
+      FROM commands c
+      JOIN sessions s ON c.session_id = s.id
+      GROUP BY s.agent
+      ORDER BY count DESC
+    `).all() as Array<{ agent: string; count: number }>
+    const agentBreakdown: Record<string, number> = {}
+    for (const row of agentRows) {
+      agentBreakdown[row.agent] = row.count
+    }
+    const uniqueAgents = Object.keys(agentBreakdown).length
+    const maxAgentCommands = agentRows.length > 0 ? agentRows[0].count : 0
+    const favoriteAgent = agentRows.length > 0 ? agentRows[0].agent : null
+    const agentsWith100 = agentRows.filter(r => r.count >= 100).length
+
+    // Behavioral stats
+    const mostUsedRow = this.db.prepare(`
+      SELECT command, COUNT(*) as count FROM commands
+      GROUP BY command ORDER BY count DESC LIMIT 1
+    `).get() as { command: string; count: number } | undefined
+    const mostUsedCommand = mostUsedRow?.command || null
+    const mostUsedCommandCount = mostUsedRow?.count || 0
+
+    const uniqueCommands = (this.db.prepare('SELECT COUNT(DISTINCT command) as c FROM commands').get() as any).c
+
+    const longestCommandLength = (this.db.prepare('SELECT COALESCE(MAX(LENGTH(command)), 0) as c FROM commands').get() as any).c
+
+    // Peak hour
+    const peakHourRow = this.db.prepare(`
+      SELECT CAST(strftime('%H', timestamp) AS INTEGER) as hour, COUNT(*) as count
+      FROM commands GROUP BY hour ORDER BY count DESC LIMIT 1
+    `).get() as { hour: number; count: number } | undefined
+    const peakHour = peakHourRow?.hour ?? null
+    const peakHourCount = peakHourRow?.count ?? 0
+
+    // Peak day of week (0=Sunday)
+    const peakDayRow = this.db.prepare(`
+      SELECT CAST(strftime('%w', timestamp) AS INTEGER) as day, COUNT(*) as count
+      FROM commands GROUP BY day ORDER BY count DESC LIMIT 1
+    `).get() as { day: number; count: number } | undefined
+    const peakDay = peakDayRow?.day ?? null
+
+    // Busiest single day
+    const busiestDayRow = this.db.prepare(`
+      SELECT DATE(timestamp) as day, COUNT(*) as count
+      FROM commands GROUP BY day ORDER BY count DESC LIMIT 1
+    `).get() as { day: string; count: number } | undefined
+    const busiestDay = busiestDayRow?.day || null
+    const busiestDayCount = busiestDayRow?.count || 0
+
+    // Avg commands per session
+    const avgCommandsPerSession = totalSessions > 0 ? Math.round(totalCommands / totalSessions) : 0
+
+    // Longest session (minutes)
+    const longestSessionRow = this.db.prepare(`
+      SELECT MAX(
+        (julianday(COALESCE(end_time, datetime('now'))) - julianday(start_time)) * 1440
+      ) as minutes FROM sessions
+    `).get() as any
+    const longestSessionMinutes = Math.round(longestSessionRow.minutes || 0)
+
+    // Late night commands (midnight to 5 AM)
+    const lateNightCount = (this.db.prepare(`
+      SELECT COUNT(*) as c FROM commands
+      WHERE CAST(strftime('%H', timestamp) AS INTEGER) < 5
+    `).get() as any).c
+
+    // Lifetime average risk
+    const avgRiskRow = this.db.prepare('SELECT AVG(risk_score) as avg FROM commands').get() as any
+    const lifetimeAvgRisk = avgRiskRow.avg ?? 0
+
+    // Cleanest streak (longest run of allowed commands)
+    const allAllowed = this.db.prepare(
+      'SELECT allowed FROM commands ORDER BY timestamp ASC'
+    ).all() as Array<{ allowed: number }>
+    let cleanestStreak = 0
+    let currentStreak = 0
+    for (const row of allAllowed) {
+      if (row.allowed === 1) {
+        currentStreak++
+        if (currentStreak > cleanestStreak) cleanestStreak = currentStreak
+      } else {
+        currentStreak = 0
+      }
+    }
+
+    // Highest risk command
+    const highestRiskRow = this.db.prepare(
+      'SELECT command, risk_score FROM commands ORDER BY risk_score DESC LIMIT 1'
+    ).get() as { command: string; risk_score: number } | undefined
+    const highestRiskCommand = highestRiskRow?.command || null
+    const highestRiskScore = highestRiskRow?.risk_score || 0
+
+    // High risk count (risk_score >= 8)
+    const highRiskCount = (this.db.prepare(
+      'SELECT COUNT(*) as c FROM commands WHERE risk_score >= 8'
+    ).get() as any).c
+
+    return {
+      totalCommands, totalBlocked, totalSessions, totalCharacters,
+      totalWatchTimeMinutes, uniqueRepos, memberSince,
+      agentBreakdown, uniqueAgents, maxAgentCommands, favoriteAgent, agentsWith100,
+      mostUsedCommand, mostUsedCommandCount, uniqueCommands, longestCommandLength,
+      peakHour, peakHourCount, peakDay, busiestDay, busiestDayCount,
+      avgCommandsPerSession, longestSessionMinutes, lateNightCount,
+      lifetimeAvgRisk, cleanestStreak, currentCleanStreak: currentStreak,
+      highestRiskCommand, highestRiskScore, highRiskCount,
+    }
+  }
+
+  computeAchievements(stats: AchievementStats): BadgeResult[] {
+    return DashboardDB.BADGE_DEFINITIONS.map(badge => {
+      const value = (stats as any)[badge.stat] as number ?? 0
+      let currentTier = 0
+      for (let i = 0; i < badge.tiers.length; i++) {
+        if (value >= badge.tiers[i]) currentTier = i + 1
+      }
+      const nextThreshold = currentTier < badge.tiers.length ? badge.tiers[currentTier] : badge.tiers[badge.tiers.length - 1]
+      const prevThreshold = currentTier > 0 ? badge.tiers[currentTier - 1] : 0
+      const progress = currentTier >= badge.tiers.length
+        ? 1
+        : (value - prevThreshold) / Math.max(1, nextThreshold - prevThreshold)
+
+      return {
+        id: badge.id,
+        name: badge.name,
+        description: badge.description,
+        category: badge.category,
+        icon: badge.icon,
+        tier: currentTier as BadgeTier,
+        tierName: TIER_NAMES[currentTier as BadgeTier],
+        value,
+        nextThreshold,
+        progress: Math.min(1, Math.max(0, progress)),
+        maxed: currentTier >= 5,
+      }
+    })
+  }
+
+  computeXP(stats: AchievementStats, badges: BadgeResult[]): XPResult {
+    const TIER_XP = [0, 50, 100, 200, 500, 1000]
+    const RANK_THRESHOLDS: Array<{ rank: string; xp: number }> = [
+      { rank: 'Obsidian', xp: 100000 },
+      { rank: 'Diamond', xp: 25000 },
+      { rank: 'Gold', xp: 5000 },
+      { rank: 'Silver', xp: 1000 },
+      { rank: 'Bronze', xp: 0 },
+    ]
+
+    let totalXP = 0
+
+    // +1 per command
+    totalXP += stats.totalCommands
+    // +3 per block
+    totalXP += stats.totalBlocked * 3
+    // +10 per session
+    totalXP += stats.totalSessions * 10
+    // +2 per late night command
+    totalXP += stats.lateNightCount * 2
+    // +25 per 100-clean-streak segments
+    totalXP += Math.floor(stats.cleanestStreak / 100) * 25
+
+    // Badge tier XP
+    for (const badge of badges) {
+      if (badge.tier > 0) {
+        totalXP += TIER_XP[badge.tier]
+      }
+    }
+
+    // Determine rank
+    let rank = 'Bronze'
+    let nextRankXP = 1000
+    for (const t of RANK_THRESHOLDS) {
+      if (totalXP >= t.xp) {
+        rank = t.rank
+        // next rank is the one above, if any
+        const idx = RANK_THRESHOLDS.indexOf(t)
+        nextRankXP = idx > 0 ? RANK_THRESHOLDS[idx - 1].xp : totalXP
+        break
+      }
+    }
+
+    const currentRankXP = RANK_THRESHOLDS.find(t => t.rank === rank)!.xp
+    const progress = rank === 'Obsidian'
+      ? 1
+      : (totalXP - currentRankXP) / Math.max(1, nextRankXP - currentRankXP)
+
+    return {
+      totalXP,
+      rank,
+      nextRankXP,
+      progress: Math.min(1, Math.max(0, progress)),
+    }
+  }
+
   close(): void {
     this.db.close()
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Achievement Types
+// ─────────────────────────────────────────────────────────────
+
+export type BadgeTier = 0 | 1 | 2 | 3 | 4 | 5
+
+const TIER_NAMES: Record<BadgeTier, string> = {
+  0: 'Locked',
+  1: 'Bronze',
+  2: 'Silver',
+  3: 'Gold',
+  4: 'Diamond',
+  5: 'Obsidian',
+}
+
+export interface BadgeDefinition {
+  id: string
+  name: string
+  description: string
+  category: string
+  icon: string
+  stat: string
+  tiers: [number, number, number, number, number]
+}
+
+export interface BadgeResult {
+  id: string
+  name: string
+  description: string
+  category: string
+  icon: string
+  tier: BadgeTier
+  tierName: string
+  value: number
+  nextThreshold: number
+  progress: number
+  maxed: boolean
+}
+
+export interface AchievementStats {
+  totalCommands: number
+  totalBlocked: number
+  totalSessions: number
+  totalCharacters: number
+  totalWatchTimeMinutes: number
+  uniqueRepos: number
+  memberSince: string | null
+  agentBreakdown: Record<string, number>
+  uniqueAgents: number
+  maxAgentCommands: number
+  favoriteAgent: string | null
+  agentsWith100: number
+  mostUsedCommand: string | null
+  mostUsedCommandCount: number
+  uniqueCommands: number
+  longestCommandLength: number
+  peakHour: number | null
+  peakHourCount: number
+  peakDay: number | null
+  busiestDay: string | null
+  busiestDayCount: number
+  avgCommandsPerSession: number
+  longestSessionMinutes: number
+  lateNightCount: number
+  lifetimeAvgRisk: number
+  cleanestStreak: number
+  currentCleanStreak: number
+  highestRiskCommand: string | null
+  highestRiskScore: number
+  highRiskCount: number
+}
+
+export interface XPResult {
+  totalXP: number
+  rank: string
+  nextRankXP: number
+  progress: number
 }
 
 export default DashboardDB

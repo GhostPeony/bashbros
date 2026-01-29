@@ -34,6 +34,9 @@ export const AGENT_CONFIG_PATHS: Record<AgentType, string[]> = {
   'gemini-cli': [
     join(homedir(), '.config', 'gemini-cli', 'config.json')
   ],
+  'copilot-cli': [
+    join(homedir(), '.config', 'github-copilot', 'config.json')
+  ],
   'opencode': [
     join(homedir(), '.opencode', 'config.yml'),
     join(homedir(), '.config', 'opencode', 'config.yml')
@@ -48,6 +51,7 @@ const AGENT_COMMANDS: Record<AgentType, string> = {
   'moltbot': 'moltbot',
   'aider': 'aider',
   'gemini-cli': 'gemini',
+  'copilot-cli': 'copilot',
   'opencode': 'opencode',
   'custom': ''
 }

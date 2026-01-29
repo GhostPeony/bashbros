@@ -1,4 +1,5 @@
 import type { SystemProfile } from './profiler.js'
+import type { OllamaClient } from './ollama.js'
 import type { AuditEntry } from '../types.js'
 
 export interface Suggestion {
@@ -12,9 +13,12 @@ export class CommandSuggester {
   private history: AuditEntry[] = []
   private profile: SystemProfile | null = null
   private patterns: Map<string, string[]> = new Map()
+  private ollama: OllamaClient | null
+  private aiCache: Map<string, { suggestions: Suggestion[], expiry: number }> = new Map()
 
-  constructor(profile: SystemProfile | null = null) {
+  constructor(profile: SystemProfile | null = null, ollama: OllamaClient | null = null) {
     this.profile = profile
+    this.ollama = ollama
     this.initPatterns()
   }
 
@@ -62,6 +66,43 @@ export class CommandSuggester {
     const unique = this.dedupeAndRank(suggestions)
 
     return unique.slice(0, 5) // Top 5
+  }
+
+  async suggestAsync(context: SuggestionContext): Promise<Suggestion[]> {
+    // Get pattern/history/context suggestions first
+    const suggestions = this.suggest(context)
+
+    if (!this.ollama) return suggestions
+
+    // Check cache
+    const cacheKey = JSON.stringify({ lc: context.lastCommand, lo: context.lastOutput?.slice(0, 100) })
+    const cached = this.aiCache.get(cacheKey)
+    if (cached && cached.expiry > Date.now()) {
+      suggestions.push(...cached.suggestions)
+      return this.dedupeAndRank(suggestions).slice(0, 5)
+    }
+
+    // Call Ollama
+    try {
+      const contextStr = `Last command: ${context.lastCommand || 'none'}\nOutput: ${(context.lastOutput || '').slice(0, 200)}\nProject: ${context.projectType || 'unknown'}`
+      const aiSuggestion = await this.ollama.suggestCommand(contextStr)
+
+      if (aiSuggestion) {
+        const aiSuggestions: Suggestion[] = [{
+          command: aiSuggestion,
+          description: 'AI suggestion',
+          confidence: 0.75,
+          source: 'model'
+        }]
+
+        this.aiCache.set(cacheKey, { suggestions: aiSuggestions, expiry: Date.now() + 5 * 60 * 1000 })
+        suggestions.push(...aiSuggestions)
+      }
+    } catch {
+      // AI unavailable
+    }
+
+    return this.dedupeAndRank(suggestions).slice(0, 5)
   }
 
   private suggestFromPatterns(lastCommand: string): Suggestion[] {

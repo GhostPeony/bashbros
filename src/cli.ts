@@ -8,7 +8,7 @@ import { BashBro } from './bro/bro.js'
 import { ClaudeCodeHooks, gateCommand } from './hooks/claude-code.js'
 import { MoltbotHooks } from './hooks/moltbot.js'
 import { RiskScorer } from './policy/risk-scorer.js'
-import { MetricsCollector } from './observability/metrics.js'
+import type { SessionMetrics } from './observability/metrics.js'
 import {
   getAllAgentConfigs,
   getAgentConfigInfo,
@@ -19,18 +19,51 @@ import {
   formatPermissionsTable,
   getEffectivePermissions
 } from './transparency/display.js'
-import { CostEstimator } from './observability/cost.js'
+import { CostEstimator, type CostEstimate } from './observability/cost.js'
 import { ReportGenerator } from './observability/report.js'
 import { UndoStack } from './safety/undo-stack.js'
 import { LoopDetector } from './policy/loop-detector.js'
+import { OutputScanner } from './policy/output-scanner.js'
+import { loadConfig } from './config.js'
 import { DashboardServer } from './dashboard/index.js'
 import { ExposureScanner, EgressMonitor, EgressPatternMatcher } from './policy/ward/index.js'
 
 // Shared state for session tracking
-let metricsCollector: MetricsCollector | null = null
-let costEstimator: CostEstimator | null = null
 let loopDetector: LoopDetector | null = null
 let undoStack: UndoStack | null = null
+
+/**
+ * Extract a session ID from a Claude Code hook event.
+ * Priority: event.session_id > env CLAUDE_SESSION_ID > ppid fallback
+ */
+function extractHookSessionId(event: Record<string, unknown>): string {
+  if (typeof event.session_id === 'string' && event.session_id) {
+    return event.session_id
+  }
+  if (process.env.CLAUDE_SESSION_ID) {
+    return process.env.CLAUDE_SESSION_ID
+  }
+  return `ppid-${process.ppid}`
+}
+
+function extractRepoName(event: Record<string, unknown>): string | null {
+  const repo = event.repo as Record<string, unknown> | undefined
+  if (repo && typeof repo.name === 'string') return repo.name
+  return null
+}
+
+/**
+ * Read JSON from stdin (shared by all hook gate/record commands)
+ */
+async function readStdinJSON(): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    chunks.push(chunk)
+  }
+  const data = Buffer.concat(chunks).toString('utf-8').trim()
+  if (!data) return {}
+  try { return JSON.parse(data) } catch { return {} }
+}
 
 const logo = `
   ╱BashBros ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -39,10 +72,26 @@ const logo = `
 
 const program = new Command()
 
+import { readFileSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+
+// Get version from package.json
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+let version = '0.1.3'
+try {
+  const pkgPath = join(__dirname, '..', 'package.json')
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
+  version = pkg.version
+} catch {
+  // Use default if package.json not found
+}
+
 program
   .name('bashbros')
   .description('The Bash Agent Helper')
-  .version('0.1.0')
+  .version(version)
 
 program
   .command('init')
@@ -680,7 +729,7 @@ program
 
     if (agent) {
       // Show specific agent
-      const validAgents = ['claude-code', 'moltbot', 'clawdbot', 'aider', 'gemini-cli', 'opencode']
+      const validAgents = ['claude-code', 'moltbot', 'clawdbot', 'copilot-cli', 'aider', 'gemini-cli', 'opencode']
       if (!validAgents.includes(agent)) {
         console.log(chalk.red(`Unknown agent: ${agent}`))
         console.log(chalk.dim(`Valid agents: ${validAgents.join(', ')}`))
@@ -732,13 +781,73 @@ program
   })
 
 program
-  .command('gate <command>')
+  .command('gate [command]')
   .description('Check if a command should be allowed (used by hooks)')
   .option('-y, --yes', 'Skip interactive prompt and block')
-  .action(async (command, options) => {
+  .action(async (rawInput, options) => {
+    // Claude Code passes hook data via stdin as JSON
+    let command = ''
+    let hookEvent: Record<string, unknown> = {}
+
+    // Read stdin (Claude Code pipes JSON to hook commands)
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      const stdinData = Buffer.concat(chunks).toString('utf-8').trim()
+      if (stdinData) {
+        const event = JSON.parse(stdinData)
+        hookEvent = event
+        if (event.tool_input?.command) {
+          command = event.tool_input.command
+        }
+      }
+    } catch {
+      // Stdin not available or not JSON
+    }
+
+    // Fallback to CLI argument (backward compat)
+    if (!command && rawInput && rawInput !== '$TOOL_INPUT') {
+      try {
+        const parsed = JSON.parse(rawInput)
+        if (parsed?.command) command = parsed.command
+      } catch {
+        command = rawInput
+      }
+    }
+
+    if (!command) {
+      // No command found - allow by default
+      process.exit(0)
+    }
+
     const result = await gateCommand(command)
 
     if (!result.allowed) {
+      // Record blocked command to dashboard DB
+      try {
+        const { DashboardWriter } = await import('./dashboard/writer.js')
+        const { RiskScorer } = await import('./policy/risk-scorer.js')
+        const scorer = new RiskScorer()
+        const risk = scorer.score(command)
+        const writer = new DashboardWriter()
+
+        const hookSessionId = extractHookSessionId(hookEvent)
+        writer.ensureHookSession(hookSessionId, process.cwd(), extractRepoName(hookEvent))
+
+        writer.recordCommand(
+          command,
+          false,
+          risk,
+          [{ type: 'command' as const, rule: 'gate', message: result.reason || 'Blocked' }],
+          0
+        )
+        writer.close()
+      } catch {
+        // Silent fail — don't interfere with gate logic
+      }
+
       // If stdin is a TTY and not skipping prompt, ask user
       if (process.stdin.isTTY && !options.yes) {
         const { allowForSession } = await import('./session.js')
@@ -828,8 +937,20 @@ program
   .description('Record a Claude Code tool execution (used by hooks)')
   .option('--marker <marker>', 'Hook marker (ignored, used for identification)')
   .action(async () => {
-    // Read JSON from CLAUDE_HOOK_EVENT environment variable
-    const eventJson = process.env.CLAUDE_HOOK_EVENT || ''
+    // Load config once for output scanning
+    const cfg = loadConfig()
+
+    // Claude Code passes hook data via stdin as JSON
+    let eventJson = ''
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      eventJson = Buffer.concat(chunks).toString('utf-8').trim()
+    } catch {
+      // Stdin not available
+    }
 
     if (!eventJson) {
       // Silent exit - no event data
@@ -842,6 +963,11 @@ program
 
       const { DashboardWriter } = await import('./dashboard/writer.js')
       const writer = new DashboardWriter()
+
+      // Extract session ID from first event and ensure session exists
+      const firstEvent = events[0] || {}
+      const hookSessionId = extractHookSessionId(firstEvent)
+      writer.ensureHookSession(hookSessionId, firstEvent.cwd || process.cwd(), extractRepoName(firstEvent))
 
       for (const evt of events) {
         const toolName = evt.tool_name || evt.tool || 'unknown'
@@ -888,6 +1014,21 @@ program
           repoPath
         })
 
+        // Output scanning
+        if (cfg.outputScanning.enabled && outputStr) {
+          try {
+            const scanner = new OutputScanner(cfg.outputScanning)
+            const scanResult = scanner.scan(outputStr)
+            if (scanResult.hasSecrets) {
+              for (const f of scanResult.findings.filter(f => f.type === 'secret')) {
+                process.stderr.write(`[BashBros] Output warning (${toolName}): ${f.message}\n`)
+              }
+            }
+          } catch {
+            // Silent fail — scanning is best-effort
+          }
+        }
+
         // Minimal output for hook
         const preview = inputStr.substring(0, 40).replace(/\n/g, ' ')
         console.log(`[BashBros] ${toolName}: ${preview}${inputStr.length > 40 ? '...' : ''}`)
@@ -901,33 +1042,53 @@ program
   })
 
 program
-  .command('record <command>')
+  .command('record [rawInput]')
   .description('Record a command execution (used by hooks)')
   .option('-o, --output <output>', 'Command output')
   .option('-e, --exit-code <code>', 'Exit code', '0')
-  .action(async (command, options) => {
-    // Initialize collectors if needed
-    if (!metricsCollector) metricsCollector = new MetricsCollector()
-    if (!costEstimator) costEstimator = new CostEstimator()
-    if (!loopDetector) loopDetector = new LoopDetector()
-    if (!undoStack) undoStack = new UndoStack()
+  .action(async (rawInput, options) => {
+    // Claude Code passes hook data via stdin as JSON
+    let command = ''
+    let stdinData = ''
+    let hookEvent: Record<string, unknown> = {}
+
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      stdinData = Buffer.concat(chunks).toString('utf-8').trim()
+      if (stdinData) {
+        const event = JSON.parse(stdinData)
+        hookEvent = event
+        if (event.tool_input?.command) {
+          command = event.tool_input.command
+        }
+      }
+    } catch {
+      // Stdin not available or not JSON
+    }
+
+    // Fallback to CLI argument
+    if (!command && rawInput && rawInput !== '$TOOL_INPUT') {
+      try {
+        const parsed = JSON.parse(rawInput)
+        if (parsed?.command) command = parsed.command
+      } catch {
+        command = rawInput
+      }
+    }
+
+    if (!command) return
+
+    // Load config for loop detector settings
+    const cfg = loadConfig()
+
+    // Initialize loop detector with config
+    if (!loopDetector) loopDetector = new LoopDetector(cfg.loopDetection)
 
     const scorer = new RiskScorer()
     const risk = scorer.score(command)
-
-    // Record metrics
-    metricsCollector.record({
-      command,
-      timestamp: new Date(),
-      duration: 0,  // Not available in hook
-      allowed: true,
-      riskScore: risk,
-      violations: [],
-      exitCode: parseInt(options.exitCode) || 0
-    })
-
-    // Record for cost estimation
-    costEstimator.recordToolCall(command, options.output || '')
 
     // Check for loops
     const loopAlert = loopDetector.check(command)
@@ -935,11 +1096,56 @@ program
       console.error(chalk.yellow(`⚠ Loop detected: ${loopAlert.message}`))
     }
 
-    // Track file changes for undo
-    const paths = command.match(/(?:^|\s)(\.\/|\.\.\/|\/|~\/)[^\s]+/g) || []
-    const cleanPaths = paths.map((p: string) => p.trim())
-    if (cleanPaths.length > 0) {
-      undoStack.recordFromCommand(command, cleanPaths)
+    // Persist to dashboard database
+    try {
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+
+      const hookSessionId = extractHookSessionId(hookEvent)
+      writer.ensureHookSession(hookSessionId, process.cwd(), extractRepoName(hookEvent))
+
+      writer.recordCommand(
+        command,
+        true,   // allowed (if we're recording post-execution, it was allowed)
+        risk,
+        [],     // no violations (it passed the gate)
+        0       // duration not available in hook mode
+      )
+
+      writer.close()
+    } catch (e) {
+      // Silent fail for hooks — don't block the agent
+      console.error(`[BashBros] Error persisting record: ${e instanceof Error ? e.message : e}`)
+    }
+
+    // Output scanning (scan tool_output from the hook event)
+    if (cfg.outputScanning.enabled && stdinData) {
+      try {
+        const event = JSON.parse(stdinData)
+        const toolOutput = event.tool_output
+        let outputStr = ''
+        if (typeof toolOutput === 'string') {
+          outputStr = toolOutput
+        } else if (typeof toolOutput === 'object' && toolOutput !== null) {
+          outputStr = (toolOutput.stdout || '') + (toolOutput.stderr || '')
+        }
+        if (outputStr) {
+          const scanner = new OutputScanner(cfg.outputScanning)
+          const scanResult = scanner.scan(outputStr)
+          if (scanResult.hasSecrets) {
+            for (const f of scanResult.findings.filter(f => f.type === 'secret')) {
+              process.stderr.write(`[BashBros] Output warning: ${f.message}\n`)
+            }
+          }
+          if (scanResult.hasErrors) {
+            for (const f of scanResult.findings.filter(f => f.type === 'error')) {
+              process.stderr.write(`[BashBros] Output notice: ${f.message}\n`)
+            }
+          }
+        }
+      } catch {
+        // Silent fail — output scanning is best-effort
+      }
     }
   })
 
@@ -947,19 +1153,101 @@ program
   .command('session-end')
   .description('Generate session report (used by hooks)')
   .option('-f, --format <format>', 'Output format (text, markdown, json)', 'text')
-  .action((options) => {
-    if (!metricsCollector) {
-      console.log(chalk.dim('No session data to report.'))
-      return
+  .action(async (options) => {
+    // Read stdin to extract session ID for marking session as completed
+    let hookSessionId: string | null = null
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      const stdinData = Buffer.concat(chunks).toString('utf-8').trim()
+      if (stdinData) {
+        const event = JSON.parse(stdinData)
+        hookSessionId = extractHookSessionId(event)
+      }
+    } catch {
+      // Stdin not available or not JSON
     }
 
-    const metrics = metricsCollector.getMetrics()
-    const cost = costEstimator?.getEstimate()
-    const report = ReportGenerator.generate(metrics, cost, { format: options.format })
+    // Try DB-backed report first (for hook mode)
+    try {
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
 
-    console.log()
-    console.log(report)
-    console.log()
+      // Mark the hook session as completed if we have a session ID
+      if (hookSessionId) {
+        writer.endHookSession(hookSessionId)
+      }
+
+      const db = writer.getDB()
+
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
+      const commands = db.getCommands({ since, limit: 10000 })
+
+      if (commands.length > 0) {
+        const startTime = commands[commands.length - 1].timestamp
+        const endTime = commands[0].timestamp
+        const duration = endTime.getTime() - startTime.getTime()
+
+        const cmdFreq = new Map<string, number>()
+        for (const cmd of commands) {
+          const base = cmd.command.split(/\s+/)[0]
+          cmdFreq.set(base, (cmdFreq.get(base) || 0) + 1)
+        }
+        const topCommands: [string, number][] = [...cmdFreq.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+
+        const violationsByType: Record<string, number> = {}
+        for (const cmd of commands) {
+          for (const v of cmd.violations) {
+            violationsByType[v] = (violationsByType[v] || 0) + 1
+          }
+        }
+
+        const metrics: SessionMetrics = {
+          sessionId: 'hook-session',
+          startTime,
+          endTime,
+          duration,
+          commandCount: commands.length,
+          blockedCount: commands.filter(c => !c.allowed).length,
+          uniqueCommands: cmdFreq.size,
+          topCommands,
+          riskDistribution: {
+            safe: commands.filter(c => c.riskLevel === 'safe').length,
+            caution: commands.filter(c => c.riskLevel === 'caution').length,
+            dangerous: commands.filter(c => c.riskLevel === 'dangerous').length,
+            critical: commands.filter(c => c.riskLevel === 'critical').length,
+          },
+          avgRiskScore: commands.reduce((sum, c) => sum + c.riskScore, 0) / commands.length,
+          avgExecutionTime: commands.reduce((sum, c) => sum + c.durationMs, 0) / commands.length,
+          totalExecutionTime: commands.reduce((sum, c) => sum + c.durationMs, 0),
+          filesModified: [],
+          pathsAccessed: [],
+          violationsByType
+        }
+
+        // Build cost estimate from tool uses
+        const toolUses = db.getToolUses({ since, limit: 10000 })
+        const estimator = new CostEstimator()
+        for (const use of toolUses) {
+          estimator.recordToolCall(use.toolInput, use.toolOutput)
+        }
+
+        const report = ReportGenerator.generate(metrics, estimator.getEstimate(), { format: options.format })
+        console.log()
+        console.log(report)
+        console.log()
+        writer.close()
+        return
+      }
+
+      writer.close()
+    } catch {
+      console.log(chalk.dim('No session data to report.'))
+    }
   })
 
 program
@@ -968,23 +1256,86 @@ program
   .option('-f, --format <format>', 'Output format (text, markdown, json)', 'text')
   .option('--no-cost', 'Hide cost estimate')
   .option('--no-risk', 'Hide risk distribution')
-  .action((options) => {
-    if (!metricsCollector) {
+  .action(async (options) => {
+    // Try DB-backed report first
+    try {
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+      const db = writer.getDB()
+
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000)
+      const commands = db.getCommands({ since, limit: 10000 })
+
+      if (commands.length > 0) {
+        const startTime = commands[commands.length - 1].timestamp
+        const endTime = commands[0].timestamp
+        const duration = endTime.getTime() - startTime.getTime()
+
+        const cmdFreq = new Map<string, number>()
+        for (const cmd of commands) {
+          const base = cmd.command.split(/\s+/)[0]
+          cmdFreq.set(base, (cmdFreq.get(base) || 0) + 1)
+        }
+        const topCommands: [string, number][] = [...cmdFreq.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+
+        const violationsByType: Record<string, number> = {}
+        for (const cmd of commands) {
+          for (const v of cmd.violations) {
+            violationsByType[v] = (violationsByType[v] || 0) + 1
+          }
+        }
+
+        const metrics: SessionMetrics = {
+          sessionId: 'hook-session',
+          startTime,
+          endTime,
+          duration,
+          commandCount: commands.length,
+          blockedCount: commands.filter(c => !c.allowed).length,
+          uniqueCommands: cmdFreq.size,
+          topCommands,
+          riskDistribution: {
+            safe: commands.filter(c => c.riskLevel === 'safe').length,
+            caution: commands.filter(c => c.riskLevel === 'caution').length,
+            dangerous: commands.filter(c => c.riskLevel === 'dangerous').length,
+            critical: commands.filter(c => c.riskLevel === 'critical').length,
+          },
+          avgRiskScore: commands.reduce((sum, c) => sum + c.riskScore, 0) / commands.length,
+          avgExecutionTime: commands.reduce((sum, c) => sum + c.durationMs, 0) / commands.length,
+          totalExecutionTime: commands.reduce((sum, c) => sum + c.durationMs, 0),
+          filesModified: [],
+          pathsAccessed: [],
+          violationsByType
+        }
+
+        let cost: CostEstimate | undefined
+        if (options.cost) {
+          const toolUses = db.getToolUses({ since, limit: 10000 })
+          const estimator = new CostEstimator()
+          for (const use of toolUses) {
+            estimator.recordToolCall(use.toolInput, use.toolOutput)
+          }
+          cost = estimator.getEstimate()
+        }
+
+        const report = ReportGenerator.generate(metrics, cost, {
+          format: options.format,
+          showCost: options.cost,
+          showRisk: options.risk
+        })
+        console.log()
+        console.log(report)
+        console.log()
+        writer.close()
+        return
+      }
+
+      writer.close()
+    } catch {
       console.log(chalk.dim('No session data. Run some commands first.'))
-      return
     }
-
-    const metrics = metricsCollector.getMetrics()
-    const cost = options.cost ? costEstimator?.getEstimate() : undefined
-    const report = ReportGenerator.generate(metrics, cost, {
-      format: options.format,
-      showCost: options.cost,
-      showRisk: options.risk
-    })
-
-    console.log()
-    console.log(report)
-    console.log()
   })
 
 program
@@ -1322,6 +1673,353 @@ patternsCmd
       console.log(chalk.dim(`    ${result.redacted.substring(0, 100)}${result.redacted.length > 100 ? '...' : ''}`))
     }
     console.log()
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Gemini CLI Integration Commands
+// ─────────────────────────────────────────────────────────────
+
+const geminiCmd = program
+  .command('gemini')
+  .description('Manage Gemini CLI integration')
+
+geminiCmd
+  .command('install')
+  .description('Install BashBros hooks into Gemini CLI')
+  .action(async () => {
+    const { GeminiCLIHooks } = await import('./hooks/gemini-cli.js')
+    const result = GeminiCLIHooks.install()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+geminiCmd
+  .command('uninstall')
+  .description('Remove BashBros hooks from Gemini CLI')
+  .action(async () => {
+    const { GeminiCLIHooks } = await import('./hooks/gemini-cli.js')
+    const result = GeminiCLIHooks.uninstall()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+geminiCmd
+  .command('status')
+  .description('Check Gemini CLI integration status')
+  .action(async () => {
+    const { GeminiCLIHooks } = await import('./hooks/gemini-cli.js')
+    const status = GeminiCLIHooks.getStatus()
+    console.log()
+    console.log(chalk.bold('Gemini CLI Integration Status'))
+    console.log()
+    console.log(`  Gemini CLI: ${status.geminiInstalled ? chalk.green('detected') : chalk.yellow('not found')}`)
+    console.log(`  BashBros hooks: ${status.hooksInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    if (status.hooks.length > 0) {
+      console.log(`  Active hooks: ${status.hooks.join(', ')}`)
+    }
+    console.log(chalk.dim('  Scope: project (.gemini/settings.json)'))
+    console.log()
+  })
+
+// ─────────────────────────────────────────────────────────────
+// GitHub Copilot CLI Integration Commands
+// ─────────────────────────────────────────────────────────────
+
+const copilotCmd = program
+  .command('copilot')
+  .description('Manage GitHub Copilot CLI integration')
+
+copilotCmd
+  .command('install')
+  .description('Install BashBros hooks into Copilot CLI')
+  .action(async () => {
+    const { CopilotCLIHooks } = await import('./hooks/copilot-cli.js')
+    const result = CopilotCLIHooks.install()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+copilotCmd
+  .command('uninstall')
+  .description('Remove BashBros hooks from Copilot CLI')
+  .action(async () => {
+    const { CopilotCLIHooks } = await import('./hooks/copilot-cli.js')
+    const result = CopilotCLIHooks.uninstall()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+copilotCmd
+  .command('status')
+  .description('Check Copilot CLI integration status')
+  .action(async () => {
+    const { CopilotCLIHooks } = await import('./hooks/copilot-cli.js')
+    const status = CopilotCLIHooks.getStatus()
+    console.log()
+    console.log(chalk.bold('Copilot CLI Integration Status'))
+    console.log()
+    console.log(`  Copilot CLI: ${status.copilotInstalled ? chalk.green('detected') : chalk.yellow('not found')}`)
+    console.log(`  BashBros hooks: ${status.hooksInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    if (status.hooks.length > 0) {
+      console.log(`  Active hooks: ${status.hooks.join(', ')}`)
+    }
+    console.log(chalk.dim('  Scope: project (.github/hooks/bashbros.json)'))
+    console.log()
+  })
+
+// ─────────────────────────────────────────────────────────────
+// OpenCode Integration Commands
+// ─────────────────────────────────────────────────────────────
+
+const opencodeCmd = program
+  .command('opencode')
+  .description('Manage OpenCode integration')
+
+opencodeCmd
+  .command('install')
+  .description('Install BashBros plugin into OpenCode')
+  .action(async () => {
+    const { OpenCodeHooks } = await import('./hooks/opencode.js')
+    const result = OpenCodeHooks.install()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+opencodeCmd
+  .command('uninstall')
+  .description('Remove BashBros plugin from OpenCode')
+  .action(async () => {
+    const { OpenCodeHooks } = await import('./hooks/opencode.js')
+    const result = OpenCodeHooks.uninstall()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+opencodeCmd
+  .command('status')
+  .description('Check OpenCode integration status')
+  .action(async () => {
+    const { OpenCodeHooks } = await import('./hooks/opencode.js')
+    const status = OpenCodeHooks.getStatus()
+    console.log()
+    console.log(chalk.bold('OpenCode Integration Status'))
+    console.log()
+    console.log(`  OpenCode: ${status.openCodeInstalled ? chalk.green('detected') : chalk.yellow('not found')}`)
+    console.log(`  BashBros plugin: ${status.pluginInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    console.log(chalk.dim('  Scope: project (.opencode/plugins/bashbros.ts)'))
+    console.log()
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Agent-Specific Gate & Record Commands
+// ─────────────────────────────────────────────────────────────
+
+program
+  .command('gemini-gate')
+  .description('Gate command for Gemini CLI hooks (internal)')
+  .action(async () => {
+    const event = await readStdinJSON()
+    // Gemini sends tool_input with the command data
+    const toolInput = event.tool_input as Record<string, unknown> | undefined
+    const command = typeof toolInput?.command === 'string' ? toolInput.command : ''
+
+    if (!command) {
+      console.log(JSON.stringify({ decision: 'allow' }))
+      process.exit(0)
+    }
+
+    const result = await gateCommand(command)
+
+    if (!result.allowed) {
+      // Record blocked command
+      try {
+        const { DashboardWriter } = await import('./dashboard/writer.js')
+        const writer = new DashboardWriter()
+        const hookSessionId = extractHookSessionId(event)
+        writer.ensureHookSession(hookSessionId, process.cwd(), extractRepoName(event))
+        const scorer = new RiskScorer()
+        const risk = scorer.score(command)
+        writer.recordCommand(command, false, risk,
+          [{ type: 'command' as const, rule: 'gate', message: result.reason || 'Blocked' }], 0)
+        writer.close()
+      } catch { /* silent */ }
+
+      // Gemini expects exit 0 with deny decision JSON on stdout
+      console.log(JSON.stringify({
+        decision: 'deny',
+        reason: result.reason || 'Blocked by BashBros'
+      }))
+      process.exit(0)
+    }
+
+    console.log(JSON.stringify({ decision: 'allow' }))
+    process.exit(0)
+  })
+
+program
+  .command('gemini-record')
+  .description('Record command for Gemini CLI hooks (internal)')
+  .action(async () => {
+    const event = await readStdinJSON()
+    const toolInput = event.tool_input as Record<string, unknown> | undefined
+    const command = typeof toolInput?.command === 'string' ? toolInput.command : ''
+
+    if (!command) return
+
+    const cfg = loadConfig()
+    if (!loopDetector) loopDetector = new LoopDetector(cfg.loopDetection)
+
+    const scorer = new RiskScorer()
+    const risk = scorer.score(command)
+
+    const loopAlert = loopDetector.check(command)
+    if (loopAlert) {
+      process.stderr.write(`[BashBros] Loop detected: ${loopAlert.message}\n`)
+    }
+
+    try {
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+      const hookSessionId = extractHookSessionId(event)
+      writer.ensureHookSession(hookSessionId, process.cwd(), extractRepoName(event))
+      writer.recordCommand(command, true, risk, [], 0)
+      writer.close()
+    } catch (e) {
+      process.stderr.write(`[BashBros] Error recording: ${e instanceof Error ? e.message : e}\n`)
+    }
+
+    // Output scanning
+    if (cfg.outputScanning.enabled) {
+      const toolOutput = event.tool_output
+      let outputStr = ''
+      if (typeof toolOutput === 'string') outputStr = toolOutput
+      else if (typeof toolOutput === 'object' && toolOutput !== null) {
+        outputStr = ((toolOutput as any).stdout || '') + ((toolOutput as any).stderr || '')
+      }
+      if (outputStr) {
+        try {
+          const scanner = new OutputScanner(cfg.outputScanning)
+          const scanResult = scanner.scan(outputStr)
+          if (scanResult.hasSecrets) {
+            for (const f of scanResult.findings.filter(f => f.type === 'secret')) {
+              process.stderr.write(`[BashBros] Output warning: ${f.message}\n`)
+            }
+          }
+        } catch { /* silent */ }
+      }
+    }
+  })
+
+program
+  .command('copilot-gate')
+  .description('Gate command for Copilot CLI hooks (internal)')
+  .action(async () => {
+    const event = await readStdinJSON()
+    // Copilot sends toolName and toolArgs
+    const toolArgs = event.toolArgs as Record<string, unknown> | undefined
+    const command = typeof toolArgs?.command === 'string' ? toolArgs.command : ''
+
+    if (!command) {
+      console.log(JSON.stringify({ permissionDecision: 'allow' }))
+      process.exit(0)
+    }
+
+    const result = await gateCommand(command)
+
+    if (!result.allowed) {
+      // Record blocked command
+      try {
+        const { DashboardWriter } = await import('./dashboard/writer.js')
+        const writer = new DashboardWriter()
+        const hookSessionId = extractHookSessionId(event)
+        writer.ensureHookSession(hookSessionId, process.cwd(), extractRepoName(event))
+        const scorer = new RiskScorer()
+        const risk = scorer.score(command)
+        writer.recordCommand(command, false, risk,
+          [{ type: 'command' as const, rule: 'gate', message: result.reason || 'Blocked' }], 0)
+        writer.close()
+      } catch { /* silent */ }
+
+      // Copilot expects permissionDecision deny + non-zero exit
+      console.log(JSON.stringify({
+        permissionDecision: 'deny',
+        permissionDecisionReason: result.reason || 'Blocked by BashBros'
+      }))
+      process.exit(1)
+    }
+
+    console.log(JSON.stringify({ permissionDecision: 'allow' }))
+    process.exit(0)
+  })
+
+program
+  .command('copilot-record')
+  .description('Record command for Copilot CLI hooks (internal)')
+  .action(async () => {
+    const event = await readStdinJSON()
+    const toolArgs = event.toolArgs as Record<string, unknown> | undefined
+    const command = typeof toolArgs?.command === 'string' ? toolArgs.command : ''
+
+    if (!command) return
+
+    const cfg = loadConfig()
+    if (!loopDetector) loopDetector = new LoopDetector(cfg.loopDetection)
+
+    const scorer = new RiskScorer()
+    const risk = scorer.score(command)
+
+    const loopAlert = loopDetector.check(command)
+    if (loopAlert) {
+      process.stderr.write(`[BashBros] Loop detected: ${loopAlert.message}\n`)
+    }
+
+    try {
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+      const hookSessionId = extractHookSessionId(event)
+      writer.ensureHookSession(hookSessionId, process.cwd(), extractRepoName(event))
+      writer.recordCommand(command, true, risk, [], 0)
+      writer.close()
+    } catch (e) {
+      process.stderr.write(`[BashBros] Error recording: ${e instanceof Error ? e.message : e}\n`)
+    }
+  })
+
+// ─────────────────────────────────────────────────────────────
+// Multi-Agent Setup Command
+// ─────────────────────────────────────────────────────────────
+
+program
+  .command('setup')
+  .description('Install BashBros hooks for multiple agents at once')
+  .action(async () => {
+    console.log(chalk.cyan(logo))
+    const { runSetup } = await import('./setup.js')
+    await runSetup()
   })
 
 program.parse()

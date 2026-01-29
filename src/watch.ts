@@ -2,18 +2,43 @@ import chalk from 'chalk'
 import { readFileSync, writeFileSync } from 'fs'
 import { parse, stringify } from 'yaml'
 import { BashBros } from './core.js'
-import { findConfig } from './config.js'
+import { findConfig, loadConfig } from './config.js'
 import { allowForSession } from './session.js'
 import { DashboardWriter } from './dashboard/writer.js'
 import { RiskScorer, type RiskScore } from './policy/risk-scorer.js'
+import { LoopDetector } from './policy/loop-detector.js'
+import { AnomalyDetector } from './policy/anomaly-detector.js'
+import { OutputScanner } from './policy/output-scanner.js'
+import { ContextStore } from './context/store.js'
+import type { PolicyViolation } from './types.js'
 
 // Dashboard writer and risk scorer for monitoring
 let dashboardWriter: DashboardWriter | null = null
 let riskScorer: RiskScorer | null = null
+let contextStore: ContextStore | null = null
+let contextCommandCount = 0
+let contextSessionStartTime: string | null = null
 
 function cleanup(): void {
   if (process.stdin.isTTY) {
     process.stdin.setRawMode(false)
+  }
+}
+
+function finalizeContextStore(agent: string): void {
+  if (!contextStore) return
+  try {
+    contextStore.writeSession({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      agent,
+      startTime: contextSessionStartTime || new Date().toISOString(),
+      endTime: new Date().toISOString(),
+      commandCount: contextCommandCount,
+      summary: `Watch session with ${contextCommandCount} commands`
+    })
+    contextStore.updateIndex()
+  } catch {
+    // Best-effort finalization
   }
 }
 
@@ -35,6 +60,9 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
   const bashbros = new BashBros(configPath)
   const config = bashbros.getConfig()
 
+  // Load full config for advanced features
+  const fullConfig = loadConfig(configPath)
+
   // Initialize dashboard writer and risk scorer
   try {
     dashboardWriter = new DashboardWriter()
@@ -51,6 +79,36 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       console.log(chalk.yellow('  Dashboard recording disabled'))
     }
   }
+
+  // Initialize context store (file-based shared context)
+  try {
+    contextStore = new ContextStore(process.cwd())
+    contextStore.initialize()
+    contextSessionStartTime = new Date().toISOString()
+    contextCommandCount = 0
+    if (options.verbose) {
+      console.log(chalk.dim('  Context store initialized'))
+    }
+  } catch (error) {
+    // Context store is non-critical
+    if (options.verbose) {
+      console.log(chalk.yellow('  Context store disabled'))
+    }
+  }
+
+  // Initialize in-memory detectors (long-lived process)
+  const loopDetector = new LoopDetector(fullConfig.loopDetection)
+  const anomalyDetector = new AnomalyDetector({
+    workingHours: fullConfig.anomalyDetection.workingHours,
+    typicalCommandsPerMinute: fullConfig.anomalyDetection.typicalCommandsPerMinute,
+    suspiciousPatterns: fullConfig.anomalyDetection.suspiciousPatterns.map(p => {
+      try { return new RegExp(p, 'i') } catch { return null }
+    }).filter((p): p is RegExp => p !== null),
+    enabled: fullConfig.anomalyDetection.enabled
+  })
+  const outputScanner = fullConfig.outputScanning.enabled
+    ? new OutputScanner(fullConfig.outputScanning)
+    : null
 
   // State for interactive prompt when command is blocked
   let pendingCommand: string | null = null
@@ -103,6 +161,11 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       case 'p':
         // Allow permanently - update config file
         try {
+          if (!configPath) {
+            console.log(chalk.red('  ✗ No config file found'))
+            console.log()
+            break
+          }
           const content = readFileSync(configPath, 'utf-8')
           const config = parse(content)
 
@@ -151,16 +214,58 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       const risk = riskScorer.score(result.command)
       dashboardWriter.recordCommand(result.command, true, risk, [], result.duration)
     }
+    // Record to context store
+    if (contextStore) {
+      try {
+        contextStore.appendCommand({
+          command: result.command,
+          output: (result.output || '').slice(0, 500),
+          agent: config.agent,
+          exitCode: result.exitCode ?? 0,
+          cwd: process.cwd()
+        })
+        contextCommandCount++
+      } catch {
+        // Best-effort context recording
+      }
+    }
     if (options.verbose) {
       console.log(chalk.green('✓'), chalk.dim(result.command))
     }
   })
 
   bashbros.on('output', (data) => {
+    // Output scanning
+    if (outputScanner) {
+      try {
+        const text = typeof data === 'string' ? data : data.toString()
+        const scanResult = outputScanner.scan(text)
+        if (scanResult.hasSecrets) {
+          for (const f of scanResult.findings.filter(f => f.type === 'secret')) {
+            process.stderr.write(chalk.yellow(`[BashBros] Output warning: ${f.message}`) + '\n')
+          }
+        }
+      } catch {
+        // Best-effort scanning
+      }
+    }
     process.stdout.write(data)
   })
 
   bashbros.on('error', (error) => {
+    // Record error to context store
+    if (contextStore) {
+      try {
+        contextStore.appendError({
+          command: '',
+          error: error.message,
+          agent: config.agent,
+          resolved: false
+        })
+      } catch {
+        // Best-effort
+      }
+    }
     console.error(chalk.red('Error:'), error.message)
   })
 
@@ -171,6 +276,8 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       dashboardWriter.endSession()
       dashboardWriter.close()
     }
+    // Finalize context store
+    finalizeContextStore(config.agent)
     cleanup()
     process.exit(exitCode ?? 0)
   })
@@ -186,6 +293,8 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       dashboardWriter.endSession()
       dashboardWriter.close()
     }
+    // Finalize context store
+    finalizeContextStore(config.agent)
 
     bashbros.stop()
     process.exit(0)
@@ -199,6 +308,8 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       dashboardWriter.endSession()
       dashboardWriter.close()
     }
+    // Finalize context store
+    finalizeContextStore(config.agent)
 
     bashbros.stop()
     process.exit(0)
@@ -213,6 +324,8 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
       dashboardWriter.crashSession()
       dashboardWriter.close()
     }
+    // Finalize context store
+    finalizeContextStore(config.agent)
 
     cleanup()
     bashbros.stop()
@@ -275,6 +388,54 @@ export async function startWatch(options: { verbose?: boolean }): Promise<void> 
         if (command) {
           // Validate the command (don't use execute() - command is already in PTY buffer)
           const violations = bashbros.validateOnly(command)
+
+          // Risk threshold check
+          if (violations.length === 0 && riskScorer && fullConfig.riskScoring.enabled) {
+            const risk = riskScorer.score(command)
+            if (risk.score >= fullConfig.riskScoring.blockThreshold) {
+              violations.push({
+                type: 'risk_score' as const,
+                rule: 'risk_threshold',
+                message: `Risk score ${risk.score} >= block threshold ${fullConfig.riskScoring.blockThreshold}: ${risk.factors.join(', ')}`
+              })
+            } else if (risk.score >= fullConfig.riskScoring.warnThreshold) {
+              process.stderr.write(chalk.yellow(`[BashBros] Warning: risk score ${risk.score} (${risk.factors.join(', ')})`) + '\n')
+            }
+          }
+
+          // In-memory loop detection
+          if (violations.length === 0 && fullConfig.loopDetection.enabled) {
+            const loopAlert = loopDetector.check(command)
+            if (loopAlert) {
+              if (fullConfig.loopDetection.action === 'block') {
+                violations.push({
+                  type: 'loop' as const,
+                  rule: loopAlert.type,
+                  message: loopAlert.message
+                })
+              } else {
+                process.stderr.write(chalk.yellow(`[BashBros] Loop warning: ${loopAlert.message}`) + '\n')
+              }
+            }
+          }
+
+          // In-memory anomaly detection
+          if (violations.length === 0 && fullConfig.anomalyDetection.enabled) {
+            const anomalies = anomalyDetector.check(command)
+            const significant = anomalies.filter(a => a.severity === 'warning' || a.severity === 'alert')
+            if (significant.length > 0) {
+              const msg = significant.map(a => a.message).join('; ')
+              if (fullConfig.anomalyDetection.action === 'block') {
+                violations.push({
+                  type: 'anomaly' as const,
+                  rule: 'anomaly_detection',
+                  message: `Anomaly: ${msg}`
+                })
+              } else {
+                process.stderr.write(chalk.yellow(`[BashBros] Anomaly: ${msg}`) + '\n')
+              }
+            }
+          }
 
           if (violations.length > 0) {
             // Blocked - clear the line and emit blocked event

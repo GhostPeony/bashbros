@@ -108,7 +108,7 @@ function validateConfig(parsed: unknown): Partial<BashBrosConfig> {
   const validated: Partial<BashBrosConfig> = {}
 
   // Validate agent type
-  const validAgents = ['claude-code', 'clawdbot', 'gemini-cli', 'aider', 'opencode', 'custom']
+  const validAgents = ['claude-code', 'clawdbot', 'moltbot', 'gemini-cli', 'copilot-cli', 'aider', 'opencode', 'custom']
   if (typeof config.agent === 'string' && validAgents.includes(config.agent)) {
     validated.agent = config.agent as BashBrosConfig['agent']
   }
@@ -332,7 +332,7 @@ function validateRemotePath(value: unknown): string | undefined {
 export function getDefaultConfig(): BashBrosConfig {
   return {
     agent: 'claude-code',
-    profile: 'balanced',
+    profile: 'permissive',
     commands: getDefaultCommands('balanced'),
     paths: getDefaultPaths('balanced'),
     secrets: {
@@ -559,8 +559,8 @@ function getDefaultCommands(profile: SecurityProfile) {
     'jest *', 'vitest *', 'pytest *', 'mocha *',
     'eslint *', 'prettier *', 'biome *', 'ruff *', 'black *',
 
-    // AI coding assistants
-    'claude *', 'aider *',
+    // AI coding assistants & security tools
+    'claude *', 'aider *', 'bashbros *',
 
     // Editors
     'code *', 'cursor *', 'vim *', 'nvim *', 'nano *', 'emacs *',

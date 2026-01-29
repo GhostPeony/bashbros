@@ -14,6 +14,7 @@ const AGENT_DISPLAY_NAMES: Record<AgentType, string> = {
   'clawdbot': 'Clawdbot (legacy)',
   'aider': 'Aider',
   'gemini-cli': 'Gemini CLI',
+  'copilot-cli': 'Copilot CLI',
   'opencode': 'OpenCode',
   'custom': 'Custom Agent'
 }

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { CommandSuggester } from './suggester.js'
+import type { SystemProfile } from './profiler.js'
 
 describe('CommandSuggester', () => {
   describe('pattern-based suggestions', () => {
@@ -231,8 +232,43 @@ describe('CommandSuggester', () => {
         platform: 'linux',
         arch: 'x64',
         shell: 'bash',
-        timestamp: new Date().toISOString()
-      })).not.toThrow()
+        timestamp: new Date()
+      } as SystemProfile)).not.toThrow()
+    })
+  })
+
+  describe('AI-enhanced suggestions', () => {
+    it('adds AI suggestions via suggestAsync', async () => {
+      const mockOllama = {
+        suggestCommand: vi.fn().mockResolvedValue('npm run lint'),
+        getModel: vi.fn().mockReturnValue('test-model')
+      }
+      const suggester = new CommandSuggester(null, mockOllama as any)
+      const suggestions = await suggester.suggestAsync({
+        lastCommand: 'npm test',
+        lastOutput: 'all tests passed'
+      })
+      expect(suggestions.some(s => s.source === 'pattern')).toBe(true)
+      expect(suggestions.some(s => s.source === 'model')).toBe(true)
+    })
+
+    it('caches AI suggestions for identical contexts', async () => {
+      const mockOllama = {
+        suggestCommand: vi.fn().mockResolvedValue('npm run lint'),
+        getModel: vi.fn().mockReturnValue('test-model')
+      }
+      const suggester = new CommandSuggester(null, mockOllama as any)
+      const ctx = { lastCommand: 'npm test', lastOutput: 'ok' }
+      await suggester.suggestAsync(ctx)
+      await suggester.suggestAsync(ctx)
+      expect(mockOllama.suggestCommand).toHaveBeenCalledTimes(1)
+    })
+
+    it('works without Ollama (graceful degradation)', async () => {
+      const suggester = new CommandSuggester()
+      const suggestions = await suggester.suggestAsync({ lastCommand: 'git status' })
+      expect(suggestions.length).toBeGreaterThan(0)
+      expect(suggestions.every(s => s.source !== 'model')).toBe(true)
     })
   })
 })

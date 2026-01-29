@@ -7,6 +7,8 @@ import { CommandSuggester, Suggestion, SuggestionContext } from './suggester.js'
 import { BackgroundWorker, BackgroundTask } from './worker.js'
 import { OllamaClient } from './ollama.js'
 import { getBashgymIntegration, type ModelManifest } from '../integration/bashgym.js'
+import { AdapterRegistry, type AdapterEntry, type AdapterPurpose } from './adapters.js'
+import { ProfileManager, type ModelProfile } from './profiles.js'
 
 export interface BroConfig {
   modelEndpoint?: string  // Ollama endpoint (default: http://localhost:11434)
@@ -16,6 +18,7 @@ export interface BroConfig {
   enableBackground?: boolean
   enableOllama?: boolean  // Use Ollama for AI features
   enableBashgymIntegration?: boolean  // Enable bashgym integration for model hot-swap
+  activeProfile?: string  // Active model profile name
 }
 
 // Allowlist of commands that can be executed directly
@@ -112,6 +115,9 @@ export class BashBro extends EventEmitter {
   private config: BroConfig
   private ollamaAvailable: boolean = false
   private bashgymModelVersion: string | null = null
+  private adapterRegistry: AdapterRegistry
+  private profileManager: ProfileManager
+  private activeProfile: ModelProfile | null = null
 
   constructor(config: BroConfig = {}) {
     super()
@@ -126,17 +132,19 @@ export class BashBro extends EventEmitter {
     }
 
     this.profiler = new SystemProfiler()
-    this.router = new TaskRouter()
-    this.suggester = new CommandSuggester()
     this.worker = new BackgroundWorker()
 
-    // Initialize Ollama client if enabled
+    // Initialize Ollama client first so router/suggester can use it
     if (this.config.enableOllama) {
       this.ollama = new OllamaClient({
         host: this.config.modelEndpoint,
         model: this.config.modelName
       })
     }
+
+    // Pass Ollama client to router and suggester for AI-enhanced features
+    this.router = new TaskRouter(null, this.ollama)
+    this.suggester = new CommandSuggester(null, this.ollama)
 
     // Forward worker events
     this.worker.on('complete', (data) => this.emit('task:complete', data))
@@ -146,6 +154,13 @@ export class BashBro extends EventEmitter {
     // Initialize bashgym integration for model hot-swap
     if (this.config.enableBashgymIntegration) {
       this.initBashgymIntegration()
+    }
+
+    // Initialize adapter registry and profile manager
+    this.adapterRegistry = new AdapterRegistry()
+    this.profileManager = new ProfileManager()
+    if (this.config.activeProfile) {
+      this.activeProfile = this.profileManager.load(this.config.activeProfile)
     }
   }
 
@@ -259,6 +274,24 @@ export class BashBro extends EventEmitter {
     }
 
     return this.suggester.suggest(context)
+  }
+
+  /**
+   * AI-enhanced async routing - uses pattern matching first, falls back to Ollama
+   */
+  async routeAsync(command: string): Promise<RoutingResult> {
+    if (!this.config.enableRouting) {
+      return { decision: 'main', reason: 'Routing disabled', confidence: 1 }
+    }
+    return this.router.routeAsync(command)
+  }
+
+  /**
+   * AI-enhanced async suggestions - pattern matching + Ollama suggestions with caching
+   */
+  async suggestAsync(context: SuggestionContext): Promise<Suggestion[]> {
+    if (!this.config.enableSuggestions) return []
+    return this.suggester.suggestAsync(context)
   }
 
   /**
@@ -596,6 +629,46 @@ export class BashBro extends EventEmitter {
     }
 
     return false
+  }
+
+  /**
+   * Get model name for a specific purpose (checks active profile for adapter override)
+   */
+  private getModelForPurpose(purpose: AdapterPurpose): string | null {
+    if (!this.activeProfile) return null
+    return this.profileManager.getModelForPurpose(this.activeProfile, purpose)
+  }
+
+  /**
+   * Get discovered LoRA adapters
+   */
+  getAdapters(): AdapterEntry[] {
+    return this.adapterRegistry.discover()
+  }
+
+  /**
+   * Get available model profiles
+   */
+  getProfiles(): ModelProfile[] {
+    return this.profileManager.list()
+  }
+
+  /**
+   * Get the active model profile
+   */
+  getActiveProfile(): ModelProfile | null {
+    return this.activeProfile
+  }
+
+  /**
+   * Set the active model profile by name
+   */
+  setActiveProfile(name: string): boolean {
+    const profile = this.profileManager.load(name)
+    if (!profile) return false
+    this.activeProfile = profile
+    this.emit('profile:changed', profile)
+    return true
   }
 
   // Format a nice status message

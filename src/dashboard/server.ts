@@ -13,6 +13,11 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { parse, stringify } from 'yaml'
 import { DashboardDB } from './db.js'
 import { findConfig } from '../config.js'
+import { ClaudeCodeHooks } from '../hooks/claude-code.js'
+import { MoltbotHooks } from '../hooks/moltbot.js'
+import { GeminiCLIHooks } from '../hooks/gemini-cli.js'
+import { CopilotCLIHooks } from '../hooks/copilot-cli.js'
+import { OpenCodeHooks } from '../hooks/opencode.js'
 
 // Default dashboard database path
 function getDefaultDbPath(): string {
@@ -63,7 +68,7 @@ export class DashboardServer {
     // CORS headers for local development
     this.app.use((_req: Request, res: Response, next) => {
       res.header('Access-Control-Allow-Origin', '*')
-      res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
       res.header('Access-Control-Allow-Headers', 'Content-Type')
       next()
     })
@@ -120,7 +125,7 @@ export class DashboardServer {
     this.app.get('/api/connectors/:name/events', (req: Request, res: Response) => {
       try {
         const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100
-        const events = this.db.getConnectorEvents(req.params.name, limit)
+        const events = this.db.getConnectorEvents(String(req.params.name), limit)
         res.json(events)
       } catch (error) {
         res.status(500).json({ error: 'Failed to fetch connector events' })
@@ -140,7 +145,7 @@ export class DashboardServer {
     // Approve a blocked egress
     this.app.post('/api/blocked/:id/approve', (req: Request, res: Response) => {
       try {
-        const { id } = req.params
+        const id = String(req.params.id)
         const approvedBy = req.body?.approvedBy ?? 'dashboard-user'
 
         const block = this.db.getBlock(id)
@@ -160,7 +165,7 @@ export class DashboardServer {
     // Deny a blocked egress
     this.app.post('/api/blocked/:id/deny', (req: Request, res: Response) => {
       try {
-        const { id } = req.params
+        const id = String(req.params.id)
         const deniedBy = req.body?.deniedBy ?? 'dashboard-user'
 
         const block = this.db.getBlock(id)
@@ -200,7 +205,7 @@ export class DashboardServer {
       }
     })
 
-    // Get active session
+    // Get active session (single - backwards compat)
     this.app.get('/api/sessions/active', (_req: Request, res: Response) => {
       try {
         const session = this.db.getActiveSession()
@@ -214,10 +219,20 @@ export class DashboardServer {
       }
     })
 
+    // Get ALL active sessions (multi-session support)
+    this.app.get('/api/sessions/active-all', (_req: Request, res: Response) => {
+      try {
+        const sessions = this.db.getActiveSessions()
+        res.json(sessions)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch active sessions' })
+      }
+    })
+
     // Get session details
     this.app.get('/api/sessions/:id', (req: Request, res: Response) => {
       try {
-        const session = this.db.getSession(req.params.id)
+        const session = this.db.getSession(String(req.params.id))
         if (!session) {
           res.status(404).json({ error: 'Session not found' })
           return
@@ -232,7 +247,7 @@ export class DashboardServer {
     this.app.get('/api/sessions/:id/commands', (req: Request, res: Response) => {
       try {
         const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 100
-        const commands = this.db.getCommandsBySession(req.params.id, limit)
+        const commands = this.db.getCommandsBySession(String(req.params.id), limit)
         res.json(commands)
       } catch (error) {
         res.status(500).json({ error: 'Failed to fetch session commands' })
@@ -242,12 +257,12 @@ export class DashboardServer {
     // Get session metrics
     this.app.get('/api/sessions/:id/metrics', (req: Request, res: Response) => {
       try {
-        const session = this.db.getSession(req.params.id)
+        const session = this.db.getSession(String(req.params.id))
         if (!session) {
           res.status(404).json({ error: 'Session not found' })
           return
         }
-        const metrics = this.db.getSessionMetrics(req.params.id)
+        const metrics = this.db.getSessionMetrics(String(req.params.id))
         res.json(metrics)
       } catch (error) {
         res.status(500).json({ error: 'Failed to fetch session metrics' })
@@ -258,12 +273,20 @@ export class DashboardServer {
     // Command Endpoints
     // ─────────────────────────────────────────────────────────────
 
-    // Get live commands (most recent)
+    // Get live commands (most recent), with optional session filter
     this.app.get('/api/commands/live', (req: Request, res: Response) => {
       try {
         const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20
-        const commands = this.db.getLiveCommands(limit)
-        res.json(commands)
+        if (req.query.sessionId) {
+          const commands = this.db.getCommands({
+            sessionId: req.query.sessionId as string,
+            limit
+          })
+          res.json(commands)
+        } else {
+          const commands = this.db.getLiveCommands(limit)
+          res.json(commands)
+        }
       } catch (error) {
         res.status(500).json({ error: 'Failed to fetch live commands' })
       }
@@ -310,6 +333,7 @@ export class DashboardServer {
         const filter: Record<string, unknown> = {}
 
         if (req.query.toolName) filter.toolName = req.query.toolName
+        if (req.query.sessionId) filter.sessionId = req.query.sessionId
         if (req.query.since) filter.since = new Date(req.query.since as string)
         if (req.query.limit) filter.limit = parseInt(req.query.limit as string, 10)
         if (req.query.offset) filter.offset = parseInt(req.query.offset as string, 10)
@@ -421,6 +445,222 @@ export class DashboardServer {
     })
 
     // ─────────────────────────────────────────────────────────────
+    // Model Management Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // Get running models
+    this.app.get('/api/bro/models/running', async (_req: Request, res: Response) => {
+      try {
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+        const response = await fetch('http://localhost:11434/api/ps', { signal: controller.signal })
+        clearTimeout(timeout)
+        if (!response.ok) { res.json({ models: [] }); return }
+        const data = await response.json()
+        res.json(data)
+      } catch { res.json({ models: [] }) }
+    })
+
+    // Get model details
+    this.app.get('/api/bro/models/:name', async (req: Request, res: Response) => {
+      try {
+        const name = decodeURIComponent(String(req.params.name))
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 5000)
+        const response = await fetch('http://localhost:11434/api/show', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+          signal: controller.signal
+        })
+        clearTimeout(timeout)
+        if (!response.ok) { res.status(404).json({ error: 'Model not found' }); return }
+        res.json(await response.json())
+      } catch { res.status(500).json({ error: 'Failed to fetch model details' }) }
+    })
+
+    // Pull a model
+    this.app.post('/api/bro/models/pull', async (req: Request, res: Response) => {
+      try {
+        const { name } = req.body
+        if (!name) { res.status(400).json({ error: 'Model name required' }); return }
+        this.broadcast({ type: 'model:pull:start', name })
+        const response = await fetch('http://localhost:11434/api/pull', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, stream: false })
+        })
+        if (response.ok) {
+          this.broadcast({ type: 'model:pull:complete', name })
+          res.json({ success: true })
+        } else {
+          this.broadcast({ type: 'model:pull:error', name })
+          res.status(500).json({ error: 'Pull failed' })
+        }
+      } catch { res.status(500).json({ error: 'Failed to pull model' }) }
+    })
+
+    // Delete a model
+    this.app.delete('/api/bro/models/:name', async (req: Request, res: Response) => {
+      try {
+        const name = decodeURIComponent(String(req.params.name))
+        const response = await fetch('http://localhost:11434/api/delete', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        })
+        res.json({ success: response.ok })
+      } catch { res.status(500).json({ error: 'Failed to delete model' }) }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Adapter Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // List discovered adapters
+    this.app.get('/api/bro/adapters', async (_req: Request, res: Response) => {
+      try {
+        const { AdapterRegistry } = await import('../bro/adapters.js')
+        const registry = new AdapterRegistry()
+        res.json(registry.discover())
+      } catch { res.json([]) }
+    })
+
+    // Get adapter events
+    this.app.get('/api/bro/adapters/events', (_req: Request, res: Response) => {
+      try { res.json(this.db.getAdapterEvents()) } catch { res.json([]) }
+    })
+
+    // Activate an adapter
+    this.app.post('/api/bro/adapters/:name/activate', async (req: Request, res: Response) => {
+      try {
+        const adapterName = String(req.params.name)
+        const { AdapterRegistry } = await import('../bro/adapters.js')
+        const registry = new AdapterRegistry()
+        const adapters = registry.discover()
+        const adapter = adapters.find((a: any) => a.name === adapterName)
+        if (!adapter) { res.status(404).json({ error: 'Adapter not found' }); return }
+
+        const modelfile = registry.generateModelfile(adapter)
+        const ollamaName = registry.ollamaModelName(adapterName)
+        const response = await fetch('http://localhost:11434/api/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: ollamaName, modelfile, stream: false })
+        })
+        if (response.ok) {
+          this.db.insertAdapterEvent({
+            adapterName, baseModel: adapter.baseModel,
+            purpose: adapter.purpose, action: 'activated', success: true
+          })
+          this.broadcast({ type: 'adapter:activated', name: adapterName })
+          res.json({ success: true, ollamaModel: ollamaName })
+        } else {
+          res.status(500).json({ error: 'Failed to create Ollama model from adapter' })
+        }
+      } catch { res.status(500).json({ error: 'Failed to activate adapter' }) }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Profile Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    this.app.get('/api/bro/profiles', async (_req: Request, res: Response) => {
+      try {
+        const { ProfileManager } = await import('../bro/profiles.js')
+        res.json(new ProfileManager().list())
+      } catch { res.json([]) }
+    })
+
+    this.app.post('/api/bro/profiles', async (req: Request, res: Response) => {
+      try {
+        const { ProfileManager } = await import('../bro/profiles.js')
+        new ProfileManager().save(req.body)
+        res.json({ success: true })
+      } catch { res.status(500).json({ error: 'Failed to save profile' }) }
+    })
+
+    this.app.delete('/api/bro/profiles/:name', async (req: Request, res: Response) => {
+      try {
+        const { ProfileManager } = await import('../bro/profiles.js')
+        new ProfileManager().delete(String(req.params.name))
+        res.json({ success: true })
+      } catch { res.status(500).json({ error: 'Failed to delete profile' }) }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Context Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    this.app.get('/api/context/index', async (_req: Request, res: Response) => {
+      try {
+        const { ContextStore } = await import('../context/store.js')
+        res.json(new ContextStore(process.cwd()).getIndex())
+      } catch { res.json({ lastUpdated: '', agents: [], sessionCount: 0, commandFileCount: 0, errorFileCount: 0 }) }
+    })
+
+    this.app.get('/api/context/memory', async (_req: Request, res: Response) => {
+      try {
+        const { ContextStore } = await import('../context/store.js')
+        const store = new ContextStore(process.cwd())
+        const files = store.listMemoryFiles()
+        const result: Record<string, string | null> = {}
+        for (const file of files) { result[file] = store.readMemory(file) }
+        res.json(result)
+      } catch { res.json({}) }
+    })
+
+    this.app.put('/api/context/memory/:name', async (req: Request, res: Response) => {
+      try {
+        const { ContextStore } = await import('../context/store.js')
+        const store = new ContextStore(process.cwd())
+        store.writeMemory(String(req.params.name), req.body.content)
+        this.broadcast({ type: 'context:updated', file: req.params.name })
+        res.json({ success: true })
+      } catch { res.status(500).json({ error: 'Failed to write memory file' }) }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Achievements Endpoint
+    // ─────────────────────────────────────────────────────────────
+
+    this.app.get('/api/achievements', (_req: Request, res: Response) => {
+      try {
+        const stats = this.db.getAchievementStats()
+        const badges = this.db.computeAchievements(stats)
+        const xp = this.db.computeXP(stats, badges)
+        res.json({ stats, badges, xp })
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch achievements' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Security Summary Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // Get security summary (last 24h)
+    this.app.get('/api/security/summary', (_req: Request, res: Response) => {
+      try {
+        const summary = this.db.getSecuritySummary()
+        res.json(summary)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch security summary' })
+      }
+    })
+
+    // Get recent blocked commands
+    this.app.get('/api/security/blocked-commands', (req: Request, res: Response) => {
+      try {
+        const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 25
+        const commands = this.db.getBlockedCommandsRecent(limit)
+        res.json(commands)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch blocked commands' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
     // Exposure Endpoints
     // ─────────────────────────────────────────────────────────────
 
@@ -465,6 +705,77 @@ export class DashboardServer {
         res.json({ success: true })
       } catch (error) {
         res.status(500).json({ error: 'Failed to save config' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
+    // Agent Integration Status
+    // ─────────────────────────────────────────────────────────────
+
+    this.app.get('/api/agents/status', async (_req: Request, res: Response) => {
+      try {
+        const claude = ClaudeCodeHooks.getStatus()
+        const moltbot = MoltbotHooks.getStatus()
+        const gemini = GeminiCLIHooks.getStatus()
+        const copilot = CopilotCLIHooks.getStatus()
+        const opencode = OpenCodeHooks.getStatus()
+
+        // Check Moltbot gateway asynchronously
+        let gatewayRunning = false
+        let sandboxMode: string | null = null
+        try {
+          const gw = await MoltbotHooks.getGatewayStatus()
+          gatewayRunning = gw.running
+          sandboxMode = gw.sandboxMode ? 'strict' : null
+        } catch {
+          // Gateway check failed; use sync fallback values
+          gatewayRunning = moltbot.gatewayRunning
+          sandboxMode = moltbot.sandboxMode
+        }
+
+        const agents = [
+          {
+            name: 'Claude Code',
+            key: 'claude-code',
+            installed: claude.claudeInstalled,
+            hooksInstalled: claude.hooksInstalled,
+            hooks: claude.hooks,
+            extra: { allToolsRecording: claude.allToolsInstalled }
+          },
+          {
+            name: 'Moltbot',
+            key: 'moltbot',
+            installed: moltbot.moltbotInstalled || moltbot.clawdbotInstalled,
+            hooksInstalled: moltbot.hooksInstalled,
+            hooks: moltbot.hooks,
+            extra: { gatewayRunning, sandboxMode }
+          },
+          {
+            name: 'Gemini CLI',
+            key: 'gemini-cli',
+            installed: gemini.geminiInstalled,
+            hooksInstalled: gemini.hooksInstalled,
+            hooks: gemini.hooks
+          },
+          {
+            name: 'GitHub Copilot CLI',
+            key: 'copilot-cli',
+            installed: copilot.copilotInstalled,
+            hooksInstalled: copilot.hooksInstalled,
+            hooks: copilot.hooks
+          },
+          {
+            name: 'OpenCode',
+            key: 'opencode',
+            installed: opencode.openCodeInstalled,
+            hooksInstalled: opencode.pluginInstalled,
+            hooks: opencode.pluginInstalled ? ['plugin (gate + record)'] : []
+          }
+        ]
+
+        res.json({ agents })
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch agent status' })
       }
     })
 

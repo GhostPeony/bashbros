@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PolicyEngine } from './engine.js'
 import type { BashBrosConfig } from '../types.js'
+import { getDefaultConfig } from '../config.js'
 
 describe('PolicyEngine', () => {
   const defaultConfig: BashBrosConfig = {
+    ...getDefaultConfig(),
     agent: 'claude-code',
     profile: 'balanced',
     commands: {

@@ -464,4 +464,17 @@ If you can't convert it, respond with "none".`
       return null
     }
   }
+
+  /**
+   * Generate with a temporary model override (for adapter-specific calls)
+   */
+  async generateWithAdapter(modelOverride: string, prompt: string, systemPrompt?: string): Promise<string> {
+    const originalModel = this.config.model
+    this.config.model = modelOverride
+    try {
+      return await this.generate(prompt, systemPrompt)
+    } finally {
+      this.config.model = originalModel
+    }
+  }
 }

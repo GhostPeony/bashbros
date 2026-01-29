@@ -45,7 +45,7 @@ describe('MetricsCollector', () => {
         duration: 0,
         allowed: false,
         riskScore: { score: 10, level: 'critical', factors: [] },
-        violations: [{ type: 'command', message: 'Blocked' }]
+        violations: [{ type: 'command', rule: 'block:rm -rf /', message: 'Blocked' }]
       })
 
       const metrics = collector.getMetrics()
@@ -166,7 +166,7 @@ describe('MetricsCollector', () => {
         duration: 0,
         allowed: false,
         riskScore: { score: 10, level: 'critical', factors: [] },
-        violations: [{ type: 'command', message: 'Blocked' }]
+        violations: [{ type: 'command', rule: 'block:rm -rf /', message: 'Blocked' }]
       })
 
       collector.record({
@@ -175,7 +175,7 @@ describe('MetricsCollector', () => {
         duration: 0,
         allowed: false,
         riskScore: { score: 9, level: 'critical', factors: [] },
-        violations: [{ type: 'path', message: 'Protected path' }]
+        violations: [{ type: 'path', rule: 'block:/etc/shadow', message: 'Protected path' }]
       })
 
       const metrics = collector.getMetrics()
@@ -244,7 +244,7 @@ describe('MetricsCollector', () => {
         duration: 0,
         allowed: false,
         riskScore: { score: 10, level: 'critical', factors: [] },
-        violations: [{ type: 'command', message: 'Blocked' }]
+        violations: [{ type: 'command', rule: 'block:blocked', message: 'Blocked' }]
       })
 
       const blocked = collector.getBlockedCommands()

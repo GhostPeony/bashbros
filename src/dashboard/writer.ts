@@ -67,6 +67,7 @@ export class DashboardWriter {
   private commandCount: number = 0
   private blockedCount: number = 0
   private totalRiskScore: number = 0
+  private hookMode: boolean = false
 
   constructor(dbPath?: string) {
     const path = dbPath ?? getDefaultDbPath()
@@ -88,6 +89,37 @@ export class DashboardWriter {
     this.totalRiskScore = 0
 
     return this.sessionId
+  }
+
+  /**
+   * Ensure a hook-mode session exists for the given external session ID.
+   * Idempotent - safe to call multiple times per hook invocation.
+   * Uses atomic DB increments so concurrent hook processes don't clobber each other.
+   */
+  ensureHookSession(hookSessionId: string, workingDir: string, repoName?: string | null): void {
+    // INSERT OR IGNORE handles the race where two processes try to create simultaneously
+    this.db.insertSessionWithId(hookSessionId, {
+      agent: 'claude-code',
+      pid: process.pid,
+      workingDir,
+      repoName: repoName ?? null,
+      mode: 'hook'
+    })
+    this.sessionId = hookSessionId
+    this.hookMode = true
+  }
+
+  /**
+   * End a hook-mode session by ID
+   */
+  endHookSession(hookSessionId: string): void {
+    const session = this.db.getSession(hookSessionId)
+    if (session && session.status === 'active') {
+      this.db.updateSession(hookSessionId, {
+        endTime: new Date(),
+        status: 'completed'
+      })
+    }
   }
 
   /**
@@ -142,10 +174,8 @@ export class DashboardWriter {
     violations: PolicyViolation[],
     durationMs: number
   ): string | null {
-    if (!this.sessionId) return null
-
     const input: InsertCommandInput = {
-      sessionId: this.sessionId,
+      sessionId: this.sessionId ?? undefined,
       command,
       allowed,
       riskScore: riskScore.score,
@@ -157,21 +187,23 @@ export class DashboardWriter {
 
     const id = this.db.insertCommand(input)
 
-    // Update session stats
-    this.commandCount++
-    this.totalRiskScore += riskScore.score
-    if (!allowed) {
-      this.blockedCount++
-    }
+    // Update session stats if we have an active session
+    if (this.sessionId) {
+      if (this.hookMode) {
+        // Hook mode: atomic SQL increment, race-safe across concurrent processes
+        this.db.incrementSessionCommand(this.sessionId, !allowed, riskScore.score)
+      } else {
+        // Watch mode: batch in memory, flush periodically or on close
+        this.commandCount++
+        this.totalRiskScore += riskScore.score
+        if (!allowed) {
+          this.blockedCount++
+        }
 
-    // Update session in DB periodically (every 10 commands)
-    if (this.commandCount % 10 === 0) {
-      const avgRiskScore = this.totalRiskScore / this.commandCount
-      this.db.updateSession(this.sessionId, {
-        commandCount: this.commandCount,
-        blockedCount: this.blockedCount,
-        avgRiskScore
-      })
+        if (this.commandCount % 10 === 0) {
+          this.flushSessionStats()
+        }
+      }
     }
 
     return id
@@ -221,7 +253,8 @@ export class DashboardWriter {
       success: input.success,
       cwd: input.cwd,
       repoName: input.repoName,
-      repoPath: input.repoPath
+      repoPath: input.repoPath,
+      sessionId: this.sessionId ?? undefined
     }
 
     return this.db.insertToolUse(dbInput)
@@ -250,9 +283,23 @@ export class DashboardWriter {
   }
 
   /**
+   * Flush in-memory session stats to DB (watch mode only).
+   */
+  private flushSessionStats(): void {
+    if (!this.sessionId || this.hookMode || this.commandCount === 0) return
+    const avgRiskScore = this.totalRiskScore / this.commandCount
+    this.db.updateSession(this.sessionId, {
+      commandCount: this.commandCount,
+      blockedCount: this.blockedCount,
+      avgRiskScore
+    })
+  }
+
+  /**
    * Close database connection
    */
   close(): void {
+    this.flushSessionStats()
     this.db.close()
   }
 

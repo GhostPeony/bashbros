@@ -24,6 +24,7 @@ export async function runOnboarding(): Promise<void> {
         { name: 'Moltbot (clawd.bot)', value: 'moltbot' },
         { name: 'Clawdbot (legacy)', value: 'clawdbot' },
         { name: 'Gemini CLI', value: 'gemini-cli' },
+        { name: 'Copilot CLI', value: 'copilot-cli' },
         { name: 'Aider', value: 'aider' },
         { name: 'OpenCode', value: 'opencode' },
         { name: 'Other (custom)', value: 'custom' }
