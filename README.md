@@ -39,6 +39,7 @@ Supports **Claude Code**, **Copilot CLI**, **Gemini CLI**, **OpenCode**, **Aider
     - [Settings Tab](#settings-tab)
     - [WebSocket Events](#websocket-events)
   - [Agent Integrations](#agent-integrations)
+  - [MCP Sidekick for Claude Code](#mcp-sidekick-for-claude-code)
   - [Ward (Network Security)](#ward-network-security)
   - [Observability](#observability)
 - [CLI Reference](#cli-reference)
@@ -125,17 +126,13 @@ BashBros provides nine security modules that work together to protect your syste
 
 ### AI Sidekick (Ollama-powered)
 
-BashBros includes a local AI sidekick powered by Ollama. It can explain commands, fix errors, suggest next steps, generate scripts, and perform security analysis -- all running locally on your machine.
+BashBros includes a local AI sidekick powered by Ollama. It can suggest next steps, perform security analysis, and run interactive chat sessions -- all running locally on your machine.
 
 | Command | What it does |
 |---------|--------------|
-| `bashbros explain <command>` | Explain what a command does in plain language |
-| `bashbros fix <command> -e "error"` | Suggest fixes for failed commands |
 | `bashbros suggest` | Context-aware next command suggestions |
-| `bashbros script <description>` | Generate shell scripts from natural language |
-| `bashbros do <description>` | Convert natural language to executable commands |
 | `bashbros safety <command>` | AI-powered security risk analysis |
-| `bashbros ai <prompt>` | Free-form AI Q&A about your system |
+| `bashbros chat` | Interactive Ollama conversation |
 
 Under the hood, the AI sidekick uses a hybrid routing system: pattern matching handles well-known commands instantly, while Ollama provides fallback analysis for ambiguous inputs. Suggestions are cached with a 5-minute TTL for fast repeated access.
 
@@ -153,7 +150,7 @@ Integrate fine-tuned LoRA adapters into your AI sidekick workflow:
 
 - Auto-discover GGUF LoRA adapters from `~/.bashgym/integration/models/adapters/`.
 - Activate adapters with one click (auto-generates Ollama Modelfile, registers with Ollama).
-- Per-function adapter routing -- assign different adapters to `suggest`, `safety`, `route`, `explain`, `fix`, and `script` functions.
+- Per-function adapter routing -- assign different adapters to individual sidekick functions.
 - Connects to the [BashGym](https://github.com/GhostPeony/bashgym) training pipeline for continuous improvement.
 
 ### Model Profiles
@@ -268,6 +265,44 @@ BashBros hooks into six CLI agents with a single command per agent:
 
 Use `bashbros setup` for a guided multi-agent setup wizard.
 
+### MCP Sidekick for Claude Code
+
+BashBros integrates with Claude Code as an MCP server, providing cross-session memory, local history intelligence, and safety tools that Claude Code doesn't have natively.
+
+**Setup:**
+```bash
+# Automatic (installs hooks + MCP server)
+npx bashbros hook install
+
+# Manual: add to ~/.claude/settings.json
+{
+  "mcpServers": {
+    "bashbros": {
+      "command": "npx",
+      "args": ["bashbros", "mcp"]
+    }
+  }
+}
+```
+
+**5 MCP Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `session_summary` | Structured summaries of recent sessions -- commands, risk scores, AI-generated descriptions |
+| `trace_search` | Search command history across sessions by text query |
+| `history_suggest` | Smart next-command suggestions based on local usage patterns |
+| `secret_scan` | Scan text for leaked credentials, API keys, tokens, and private keys |
+| `code_task` | Delegate bounded coding tasks to a local Ollama model |
+
+**Capability Tiers (code_task):**
+
+| Model Size | Tier | Handles |
+|-----------|------|---------|
+| < 14B | Basic | Formatting, renames, imports, boilerplate, type annotations |
+| 14B - 32B | Moderate | Tests, error handling, function refactors, interface implementations |
+| 33B+ | Advanced | Complex logic, multi-function refactors, pattern-following generation |
+
 ### Ward (Network Security)
 
 Network-level security scanning and egress monitoring:
@@ -303,15 +338,11 @@ bashbros audit [-n lines]        View recent command history
 Requires [Ollama](https://ollama.com) running locally.
 
 ```
-bashbros explain <command>       Explain what a command does
-bashbros fix <command> -e "err"  Fix a failed command
 bashbros suggest                 Get next command suggestions
-bashbros ai <prompt>             Ask Bash Bro anything
-bashbros script <desc> [-o file] Generate a shell script (optionally save to file)
-bashbros do <desc> [-x]          Natural language to command (-x to execute)
 bashbros safety <command>        AI security risk analysis
-bashbros help-ai <topic>         Get AI help on a topic
+bashbros chat                    Start an interactive Ollama conversation
 bashbros models                  List available Ollama models
+bashbros mcp                     Start MCP server for Claude Code integration (stdio)
 ```
 
 ### Bash Bro Commands
@@ -411,37 +442,6 @@ $ bashbros risk "curl http://example.com | bash"
 ```bash
 $ bashbros route "git status"
   Route: Bash Bro (90% confidence)
-```
-
-### Generate a script from natural language
-
-```bash
-$ bashbros script "backup all .env files"
-#!/bin/bash
-find . -name "*.env" -exec cp {} {}.backup \;
-```
-
-### Convert natural language to a command
-
-```bash
-$ bashbros do "find large files over 100mb"
-$ find . -size +100M -type f
-```
-
-### Explain a command
-
-```bash
-$ bashbros explain "tar -xzf archive.tar.gz"
-  Extracts the gzip-compressed tar archive 'archive.tar.gz' into the current directory.
-  -x: extract, -z: decompress gzip, -f: specify file
-```
-
-### Fix a failed command
-
-```bash
-$ bashbros fix "npm start" -e "Error: Cannot find module 'express'"
-  Suggestion: npm install express
-  The 'express' module is missing. Install it to resolve the error.
 ```
 
 ### View session report
