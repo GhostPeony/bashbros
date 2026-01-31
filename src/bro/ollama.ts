@@ -192,46 +192,6 @@ Respond with ONLY the command, no explanation. If unsure, respond with "none".`
   }
 
   /**
-   * Ask Bash Bro to explain a command
-   */
-  async explainCommand(command: string): Promise<string> {
-    const systemPrompt = `You are Bash Bro, a helpful command-line assistant.
-Explain what the given command does in 1-2 sentences. Be concise and accurate.`
-
-    try {
-      return await this.generate(`Explain: ${command}`, systemPrompt)
-    } catch {
-      return 'Could not explain command.'
-    }
-  }
-
-  /**
-   * Ask Bash Bro to fix a command that failed
-   */
-  async fixCommand(command: string, error: string): Promise<string | null> {
-    const systemPrompt = `You are Bash Bro, a helpful command-line assistant.
-Given a failed command and its error, suggest a fixed version.
-Respond with ONLY the fixed command, no explanation. If you can't fix it, respond with "none".`
-
-    try {
-      const response = await this.generate(
-        `Command: ${command}\nError: ${error}\nFixed command:`,
-        systemPrompt
-      )
-
-      const fixed = response.trim()
-
-      if (fixed.toLowerCase() === 'none' || fixed.length > 500) {
-        return null
-      }
-
-      return fixed
-    } catch {
-      return null
-    }
-  }
-
-  /**
    * Show detailed info about a model
    */
   async showModel(name: string): Promise<ModelInfo | null> {
@@ -343,26 +303,6 @@ Respond with ONLY the fixed command, no explanation. If you can't fix it, respon
   }
 
   /**
-   * Generate a shell script from a natural language description
-   */
-  async generateScript(description: string, shell: string = 'bash'): Promise<string | null> {
-    const systemPrompt = `You are Bash Bro, a helpful command-line assistant.
-Generate a ${shell} script based on the user's description.
-Output ONLY the script, no explanation. Start with the shebang line.
-Keep scripts simple, readable, and well-commented.`
-
-    try {
-      const response = await this.generate(
-        `Generate a ${shell} script that: ${description}`,
-        systemPrompt
-      )
-      return response.trim()
-    } catch {
-      return null
-    }
-  }
-
-  /**
    * Analyze command safety and provide recommendations
    */
   async analyzeCommandSafety(command: string): Promise<{
@@ -402,66 +342,6 @@ Respond with JSON only, in this format:
         explanation: 'Analysis unavailable.',
         suggestions: []
       }
-    }
-  }
-
-  /**
-   * Summarize a series of commands and their outputs
-   */
-  async summarizeSession(commands: { command: string; output?: string; error?: string }[]): Promise<string> {
-    const systemPrompt = `You are Bash Bro, a helpful command-line assistant.
-Summarize what happened in this terminal session in 2-3 sentences.
-Focus on what was accomplished and any issues encountered.`
-
-    const sessionText = commands.map(c => {
-      let text = `$ ${c.command}`
-      if (c.output) text += `\n${c.output.slice(0, 500)}`
-      if (c.error) text += `\nError: ${c.error.slice(0, 200)}`
-      return text
-    }).join('\n\n')
-
-    try {
-      return await this.generate(sessionText, systemPrompt)
-    } catch {
-      return 'Could not summarize session.'
-    }
-  }
-
-  /**
-   * Get help for a specific tool or command
-   */
-  async getHelp(topic: string): Promise<string> {
-    const systemPrompt = `You are Bash Bro, a helpful command-line assistant.
-Provide concise help about the requested command or topic.
-Include common usage examples. Keep it practical and brief.`
-
-    try {
-      return await this.generate(`Help with: ${topic}`, systemPrompt)
-    } catch {
-      return 'Could not get help for this topic.'
-    }
-  }
-
-  /**
-   * Convert natural language to a command
-   */
-  async naturalToCommand(description: string): Promise<string | null> {
-    const systemPrompt = `You are Bash Bro, a helpful command-line assistant.
-Convert the user's request into a single command line.
-Respond with ONLY the command, no explanation.
-If you can't convert it, respond with "none".`
-
-    try {
-      const response = await this.generate(description, systemPrompt)
-      const command = response.trim()
-
-      if (command.toLowerCase() === 'none' || command.length > 300) {
-        return null
-      }
-
-      return command
-    } catch {
-      return null
     }
   }
 
