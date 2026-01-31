@@ -356,6 +356,37 @@ export class DashboardServer {
     })
 
     // ─────────────────────────────────────────────────────────────
+    // User Prompts Endpoints
+    // ─────────────────────────────────────────────────────────────
+
+    // Get prompts with filtering
+    this.app.get('/api/prompts', (req: Request, res: Response) => {
+      try {
+        const filter: Record<string, unknown> = {}
+
+        if (req.query.sessionId) filter.sessionId = req.query.sessionId
+        if (req.query.since) filter.since = new Date(req.query.since as string)
+        if (req.query.limit) filter.limit = parseInt(req.query.limit as string, 10)
+        if (req.query.offset) filter.offset = parseInt(req.query.offset as string, 10)
+
+        const prompts = this.db.getUserPrompts(filter)
+        res.json(prompts)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch prompts' })
+      }
+    })
+
+    // Get prompt stats
+    this.app.get('/api/prompts/stats', (_req: Request, res: Response) => {
+      try {
+        const stats = this.db.getUserPromptStats()
+        res.json(stats)
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to fetch prompt stats' })
+      }
+    })
+
+    // ─────────────────────────────────────────────────────────────
     // Bash Bro Endpoints
     // ─────────────────────────────────────────────────────────────
 

@@ -6,7 +6,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { mkdirSync, existsSync } from 'fs'
-import { DashboardDB, type InsertCommandInput, type InsertBroEventInput, type InsertBroStatusInput, type InsertToolUseInput } from './db.js'
+import { DashboardDB, type InsertCommandInput, type InsertBroEventInput, type InsertBroStatusInput, type InsertToolUseInput, type InsertUserPromptInput } from './db.js'
 import type { RiskScore } from '../policy/risk-scorer.js'
 import type { PolicyViolation } from '../types.js'
 
@@ -107,6 +107,14 @@ export class DashboardWriter {
     })
     this.sessionId = hookSessionId
     this.hookMode = true
+  }
+
+  /**
+   * Update session metadata (e.g., git branch, config profile)
+   */
+  updateSessionMetadata(metadata: Record<string, unknown>): void {
+    if (!this.sessionId) return
+    this.db.updateSessionMetadata(this.sessionId, metadata)
   }
 
   /**
@@ -258,6 +266,19 @@ export class DashboardWriter {
     }
 
     return this.db.insertToolUse(dbInput)
+  }
+
+  /**
+   * Record a user prompt submission
+   */
+  recordUserPrompt(input: { promptText: string; cwd?: string }): string {
+    const dbInput: InsertUserPromptInput = {
+      sessionId: this.sessionId ?? undefined,
+      promptText: input.promptText,
+      cwd: input.cwd
+    }
+
+    return this.db.insertUserPrompt(dbInput)
   }
 
   /**
