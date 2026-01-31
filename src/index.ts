@@ -38,6 +38,10 @@ export { MetricsCollector } from './observability/metrics.js'
 export { CostEstimator } from './observability/cost.js'
 export { ReportGenerator } from './observability/report.js'
 
+// MCP Server
+export { startMCPServer } from './mcp/server.js'
+export type { CapabilityTier } from './mcp/tools.js'
+
 // Hooks
 export { ClaudeCodeHooks, gateCommand } from './hooks/claude-code.js'
 export { MoltbotHooks, getMoltbotHooks } from './hooks/moltbot.js'
