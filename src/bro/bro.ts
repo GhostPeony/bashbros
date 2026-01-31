@@ -391,118 +391,11 @@ export class BashBro extends EventEmitter {
   }
 
   /**
-   * Ask Bash Bro to explain a command
-   */
-  async aiExplain(command: string): Promise<string> {
-    if (!this.ollama || !this.ollamaAvailable) {
-      return 'Ollama not available for explanations.'
-    }
-
-    const startTime = Date.now()
-    try {
-      const result = await this.ollama.explainCommand(command)
-      const latency = Date.now() - startTime
-
-      this.emit('bro:explanation', {
-        input: command,
-        output: result,
-        model: this.ollama.getModel(),
-        latencyMs: latency,
-        success: true
-      })
-
-      return result
-    } catch (error) {
-      const latency = Date.now() - startTime
-      this.emit('bro:explanation', {
-        input: command,
-        output: 'Could not explain command.',
-        model: this.ollama?.getModel() ?? 'unknown',
-        latencyMs: latency,
-        success: false
-      })
-      return 'Could not explain command.'
-    }
-  }
-
-  /**
-   * Ask Bash Bro to fix a failed command
-   */
-  async aiFix(command: string, error: string): Promise<string | null> {
-    if (!this.ollama || !this.ollamaAvailable) {
-      return null
-    }
-
-    const startTime = Date.now()
-    try {
-      const result = await this.ollama.fixCommand(command, error)
-      const latency = Date.now() - startTime
-
-      this.emit('bro:fix', {
-        input: `${command} | Error: ${error}`,
-        output: result ?? '',
-        model: this.ollama.getModel(),
-        latencyMs: latency,
-        success: result !== null
-      })
-
-      return result
-    } catch (err) {
-      const latency = Date.now() - startTime
-      this.emit('bro:fix', {
-        input: `${command} | Error: ${error}`,
-        output: '',
-        model: this.ollama?.getModel() ?? 'unknown',
-        latencyMs: latency,
-        success: false
-      })
-      return null
-    }
-  }
-
-  /**
    * Set the Ollama model to use
    */
   setModel(model: string): void {
     if (this.ollama) {
       this.ollama.setModel(model)
-    }
-  }
-
-  /**
-   * Generate a shell script from natural language description
-   */
-  async aiGenerateScript(description: string): Promise<string | null> {
-    if (!this.ollama || !this.ollamaAvailable) {
-      return null
-    }
-
-    const shell = this.profile?.shell || 'bash'
-    const startTime = Date.now()
-
-    try {
-      const result = await this.ollama.generateScript(description, shell)
-      const latency = Date.now() - startTime
-
-      this.emit('bro:script', {
-        input: description,
-        output: result ?? '',
-        model: this.ollama.getModel(),
-        latencyMs: latency,
-        success: result !== null
-      })
-
-      return result
-    } catch (error) {
-      const latency = Date.now() - startTime
-      this.emit('bro:script', {
-        input: description,
-        output: '',
-        model: this.ollama?.getModel() ?? 'unknown',
-        latencyMs: latency,
-        success: false
-      })
-      return null
     }
   }
 
@@ -554,39 +447,6 @@ export class BashBro extends EventEmitter {
         suggestions: []
       }
     }
-  }
-
-  /**
-   * Summarize a terminal session
-   */
-  async aiSummarize(commands: { command: string; output?: string; error?: string }[]): Promise<string> {
-    if (!this.ollama || !this.ollamaAvailable) {
-      return 'AI not available for summaries.'
-    }
-
-    return this.ollama.summarizeSession(commands)
-  }
-
-  /**
-   * Get AI help for a topic or command
-   */
-  async aiHelp(topic: string): Promise<string> {
-    if (!this.ollama || !this.ollamaAvailable) {
-      return 'AI not available for help.'
-    }
-
-    return this.ollama.getHelp(topic)
-  }
-
-  /**
-   * Convert natural language to command
-   */
-  async aiToCommand(description: string): Promise<string | null> {
-    if (!this.ollama || !this.ollamaAvailable) {
-      return null
-    }
-
-    return this.ollama.naturalToCommand(description)
   }
 
   /**
