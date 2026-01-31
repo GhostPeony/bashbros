@@ -278,104 +278,6 @@ program
     }
   })
 
-// ─────────────────────────────────────────────────────────────
-// AI Commands (requires Ollama)
-// ─────────────────────────────────────────────────────────────
-
-program
-  .command('explain <command>')
-  .description('Ask Bash Bro to explain a command')
-  .action(async (command) => {
-    const bro = new BashBro()
-    await bro.initialize()
-
-    if (!bro.isOllamaAvailable()) {
-      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
-      return
-    }
-
-    console.log(chalk.dim('🤝 Bash Bro is thinking...\n'))
-    const explanation = await bro.aiExplain(command)
-    console.log(explanation)
-  })
-
-program
-  .command('fix <command>')
-  .description('Ask Bash Bro to fix a failed command')
-  .option('-e, --error <message>', 'Error message from the failed command')
-  .action(async (command, options) => {
-    const bro = new BashBro()
-    await bro.initialize()
-
-    if (!bro.isOllamaAvailable()) {
-      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
-      return
-    }
-
-    const error = options.error || 'Command failed'
-    console.log(chalk.dim('🤝 Bash Bro is analyzing...\n'))
-
-    const fixed = await bro.aiFix(command, error)
-
-    if (fixed) {
-      console.log(chalk.green('Suggested fix:'))
-      console.log(chalk.cyan(`  ${fixed}`))
-    } else {
-      console.log(chalk.yellow('Could not suggest a fix.'))
-    }
-  })
-
-program
-  .command('ai <prompt>')
-  .description('Ask Bash Bro anything')
-  .action(async (prompt) => {
-    const bro = new BashBro()
-    await bro.initialize()
-
-    if (!bro.isOllamaAvailable()) {
-      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
-      return
-    }
-
-    console.log(chalk.dim('🤝 Bash Bro is thinking...\n'))
-    const suggestion = await bro.aiSuggest(prompt)
-
-    if (suggestion) {
-      console.log(chalk.cyan(suggestion))
-    } else {
-      console.log(chalk.dim('No suggestion available.'))
-    }
-  })
-
-program
-  .command('script <description>')
-  .description('Generate a shell script from description')
-  .option('-o, --output <file>', 'Save script to file')
-  .action(async (description, options) => {
-    const bro = new BashBro()
-    await bro.initialize()
-
-    if (!bro.isOllamaAvailable()) {
-      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
-      return
-    }
-
-    console.log(chalk.dim('🤝 Bash Bro is generating script...\n'))
-    const script = await bro.aiGenerateScript(description)
-
-    if (script) {
-      console.log(chalk.cyan(script))
-
-      if (options.output) {
-        const { writeFileSync } = await import('fs')
-        writeFileSync(options.output, script, { mode: 0o755 })
-        console.log(chalk.green(`\n✓ Saved to ${options.output}`))
-      }
-    } else {
-      console.log(chalk.yellow('Could not generate script.'))
-    }
-  })
-
 program
   .command('safety <command>')
   .description('Analyze a command for security risks')
@@ -412,55 +314,6 @@ program
       for (const suggestion of analysis.suggestions) {
         console.log(`  • ${suggestion}`)
       }
-    }
-  })
-
-program
-  .command('help-ai <topic>')
-  .alias('h')
-  .description('Get AI help for a command or topic')
-  .action(async (topic) => {
-    const bro = new BashBro()
-    await bro.initialize()
-
-    if (!bro.isOllamaAvailable()) {
-      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
-      return
-    }
-
-    console.log(chalk.dim('🤝 Bash Bro is looking that up...\n'))
-    const help = await bro.aiHelp(topic)
-    console.log(help)
-  })
-
-program
-  .command('do <description>')
-  .description('Convert natural language to a command')
-  .option('-x, --execute', 'Execute the command after showing it')
-  .action(async (description, options) => {
-    const bro = new BashBro()
-    await bro.initialize()
-
-    if (!bro.isOllamaAvailable()) {
-      console.log(chalk.yellow('Ollama not available. Start Ollama to use AI features.'))
-      return
-    }
-
-    console.log(chalk.dim('🤝 Bash Bro is translating...\n'))
-    const command = await bro.aiToCommand(description)
-
-    if (command) {
-      console.log(chalk.bold('Command:'))
-      console.log(chalk.cyan(`  $ ${command}`))
-
-      if (options.execute) {
-        console.log()
-        console.log(chalk.dim('Executing...'))
-        const output = await bro.execute(command)
-        console.log(output)
-      }
-    } else {
-      console.log(chalk.yellow('Could not translate to a command.'))
     }
   })
 
@@ -538,6 +391,7 @@ hookCmd
     console.log(`  Claude Code: ${status.claudeInstalled ? chalk.green('installed') : chalk.yellow('not found')}`)
     console.log(`  BashBros hooks: ${status.hooksInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
     console.log(`  All-tools recording: ${status.allToolsInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
+    console.log(`  Prompt recording: ${status.promptHookInstalled ? chalk.green('active') : chalk.dim('not installed')}`)
     if (status.hooks.length > 0) {
       console.log(`  Active hooks: ${status.hooks.join(', ')}`)
     }
@@ -562,6 +416,32 @@ hookCmd
   .description('Remove all-tools recording hook')
   .action(() => {
     const result = ClaudeCodeHooks.uninstallAllTools()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+hookCmd
+  .command('install-prompt')
+  .description('Install hook to record user prompt submissions')
+  .action(() => {
+    const result = ClaudeCodeHooks.installPromptHook()
+    if (result.success) {
+      console.log(chalk.green('✓'), result.message)
+    } else {
+      console.log(chalk.red('✗'), result.message)
+      process.exit(1)
+    }
+  })
+
+hookCmd
+  .command('uninstall-prompt')
+  .description('Remove prompt recording hook')
+  .action(() => {
+    const result = ClaudeCodeHooks.uninstallPromptHook()
     if (result.success) {
       console.log(chalk.green('✓'), result.message)
     } else {
@@ -1038,6 +918,46 @@ program
     } catch (e) {
       // Silent fail for hooks
       console.error(`[BashBros] Error recording tool: ${e instanceof Error ? e.message : e}`)
+    }
+  })
+
+program
+  .command('record-prompt')
+  .description('Record a user prompt submission (used by UserPromptSubmit hook)')
+  .option('--marker <marker>', 'Hook marker (ignored, used for identification)')
+  .action(async () => {
+    // CRITICAL: No stdout output. UserPromptSubmit stdout gets injected into Claude's context.
+    // All errors go to stderr only.
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      const stdinData = Buffer.concat(chunks).toString('utf-8').trim()
+      if (!stdinData) return
+
+      const event = JSON.parse(stdinData)
+
+      // Extract prompt text from the event
+      const promptText = typeof event.prompt === 'string' ? event.prompt : ''
+      if (!promptText) return
+
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+
+      // Ensure hook session exists
+      const hookSessionId = extractHookSessionId(event)
+      writer.ensureHookSession(hookSessionId, event.cwd || process.cwd(), extractRepoName(event))
+
+      writer.recordUserPrompt({
+        promptText,
+        cwd: event.cwd || process.cwd()
+      })
+
+      writer.close()
+    } catch (e) {
+      // Errors to stderr only — never stdout
+      process.stderr.write(`[BashBros] Error recording prompt: ${e instanceof Error ? e.message : e}\n`)
     }
   })
 
