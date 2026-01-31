@@ -233,6 +233,17 @@ function validateConfig(parsed: unknown): Partial<BashBrosConfig> {
     }
   }
 
+  // Validate sessionStart
+  if (config.sessionStart && typeof config.sessionStart === 'object') {
+    const ss = config.sessionStart as Record<string, unknown>
+    validated.sessionStart = {
+      enabled: typeof ss.enabled === 'boolean' ? ss.enabled : true,
+      collectMetadata: typeof ss.collectMetadata === 'boolean' ? ss.collectMetadata : true,
+      ollamaStatus: typeof ss.ollamaStatus === 'boolean' ? ss.ollamaStatus : false,
+      preloadContext: typeof ss.preloadContext === 'boolean' ? ss.preloadContext : true
+    }
+  }
+
   return validated
 }
 
@@ -639,7 +650,8 @@ function mergeWithDefaults(parsed: Partial<BashBrosConfig>): BashBrosConfig {
     outputScanning: { ...defaults.outputScanning, ...parsed.outputScanning },
     undo: { ...defaults.undo, ...parsed.undo },
     ward: { ...defaults.ward, ...parsed.ward },
-    dashboard: { ...defaults.dashboard, ...parsed.dashboard }
+    dashboard: { ...defaults.dashboard, ...parsed.dashboard },
+    sessionStart: { ...defaults.sessionStart, ...parsed.sessionStart }
   }
 }
 
