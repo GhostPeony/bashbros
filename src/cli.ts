@@ -122,8 +122,10 @@ program
   .command('allow <command>')
   .description('Allow a specific command')
   .option('--once', 'Allow only for current session')
+  .option('--session', 'Allow only for current session (alias for --once)')
   .option('--persist', 'Add to config permanently')
   .action(async (command, options) => {
+    if (options.session) options.once = true
     await handleAllow(command, options)
   })
 
@@ -802,8 +804,12 @@ program
             process.exit(2)
         }
       } else {
-        // Clean, minimal output for non-interactive use (hooks)
-        console.error(`Blocked: ${result.reason}`)
+        // Self-healing: include remediation hints Claude can act on
+        const baseCmd = command.split(/\s+/)[0]
+        process.stderr.write(`[BashBros] Blocked: '${command.slice(0, 80)}'\n`)
+        process.stderr.write(`[BashBros] Reason: ${result.reason}\n`)
+        process.stderr.write(`[BashBros] To allow for this session: bashbros allow "${baseCmd} *" --once\n`)
+        process.stderr.write(`[BashBros] To allow permanently: add "${baseCmd} *" to .bashbros.yml commands.allow\n`)
         process.exit(2)
       }
     }
@@ -958,6 +964,83 @@ program
     } catch (e) {
       // Errors to stderr only — never stdout
       process.stderr.write(`[BashBros] Error recording prompt: ${e instanceof Error ? e.message : e}\n`)
+    }
+  })
+
+program
+  .command('session-start')
+  .description('Initialize a session (used by SessionStart hook)')
+  .option('--marker <marker>', 'Hook marker (ignored, used for identification)')
+  .action(async () => {
+    // CRITICAL: No stdout output. SessionStart stdout gets injected into Claude's context.
+    // All errors go to stderr only.
+    try {
+      const chunks: Buffer[] = []
+      for await (const chunk of process.stdin) {
+        chunks.push(chunk)
+      }
+      const stdinData = Buffer.concat(chunks).toString('utf-8').trim()
+      const event: Record<string, unknown> = stdinData ? JSON.parse(stdinData) : {}
+
+      const hookSessionId = extractHookSessionId(event)
+      const workingDir = (event.cwd as string) || process.cwd()
+      const repoName = extractRepoName(event)
+
+      const { DashboardWriter } = await import('./dashboard/writer.js')
+      const writer = new DashboardWriter()
+
+      // Create session record immediately
+      writer.ensureHookSession(hookSessionId, workingDir, repoName)
+
+      // Collect metadata if configured
+      const cfg = loadConfig()
+      if (cfg.sessionStart.enabled && cfg.sessionStart.collectMetadata) {
+        const metadata: Record<string, unknown> = {
+          node_version: process.version,
+          agent: 'claude-code'
+        }
+
+        // Git info (fail silently)
+        try {
+          const { execSync } = await import('child_process')
+          const opts = { encoding: 'utf-8' as const, timeout: 3000, cwd: workingDir, stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'] }
+          metadata.git_branch = execSync('git rev-parse --abbrev-ref HEAD', opts).trim()
+          metadata.git_dirty = execSync('git status --porcelain', opts).trim().length > 0
+        } catch {
+          // Not a git repo or git not available
+        }
+
+        // Config profile
+        metadata.config_profile = cfg.profile
+
+        // Ollama status (opt-in, adds latency)
+        if (cfg.sessionStart.ollamaStatus) {
+          try {
+            const resp = await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(2000) })
+            metadata.ollama_available = resp.ok
+          } catch {
+            metadata.ollama_available = false
+          }
+        }
+
+        writer.updateSessionMetadata(metadata)
+      }
+
+      // Pre-load context store (warm up)
+      if (cfg.sessionStart.enabled && cfg.sessionStart.preloadContext) {
+        try {
+          const { ContextStore } = await import('./context/store.js')
+          const store = new ContextStore(workingDir)
+          store.listMemoryFiles() // Trigger directory reads to warm FS cache
+        } catch {
+          // Context store not initialized, skip silently
+        }
+      }
+
+      writer.close()
+    } catch (e) {
+      // Errors to stderr only -- never stdout, never exit non-zero
+      process.stderr.write(`[BashBros] Error in session-start: ${e instanceof Error ? e.message : e}\n`)
     }
   })
 
@@ -1375,6 +1458,18 @@ program
       await dashboardServer?.stop()
       process.exit(0)
     })
+  })
+
+// ─────────────────────────────────────────────────────────────
+// MCP Server Command
+// ─────────────────────────────────────────────────────────────
+
+program
+  .command('mcp')
+  .description('Start MCP server for Claude Code integration (stdio)')
+  .action(async () => {
+    const { startMCPServer } = await import('./mcp/server.js')
+    await startMCPServer()
   })
 
 // ─────────────────────────────────────────────────────────────
