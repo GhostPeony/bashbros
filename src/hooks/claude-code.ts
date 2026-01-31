@@ -15,6 +15,7 @@ export interface ClaudeSettings {
     SessionStart?: HookConfig[]
     UserPromptSubmit?: HookConfig[]
   }
+  mcpServers?: Record<string, { command: string; args: string[] }>
   [key: string]: unknown
 }
 
@@ -151,6 +152,17 @@ export class ClaudeCodeHooks {
       sessionStartHook
     ]
 
+    // Add MCP server config
+    if (!settings.mcpServers) {
+      settings.mcpServers = {}
+    }
+    if (!settings.mcpServers.bashbros) {
+      settings.mcpServers.bashbros = {
+        command: 'npx',
+        args: ['bashbros', 'mcp'],
+      }
+    }
+
     this.saveSettings(settings)
 
     return {
@@ -207,6 +219,14 @@ export class ClaudeCodeHooks {
     if (settings.hooks.UserPromptSubmit?.length === 0) delete settings.hooks.UserPromptSubmit
     if (Object.keys(settings.hooks).length === 0) delete settings.hooks
 
+    // Remove MCP server config
+    if (settings.mcpServers?.bashbros) {
+      delete settings.mcpServers.bashbros
+      if (Object.keys(settings.mcpServers).length === 0) {
+        delete settings.mcpServers
+      }
+    }
+
     this.saveSettings(settings)
 
     return {
@@ -237,6 +257,14 @@ export class ClaudeCodeHooks {
   }
 
   /**
+   * Check if MCP server config is installed
+   */
+  static isMCPInstalled(settings?: ClaudeSettings): boolean {
+    const s = settings || this.loadSettings()
+    return !!s.mcpServers?.bashbros
+  }
+
+  /**
    * Get hook status
    */
   static getStatus(): {
@@ -244,6 +272,7 @@ export class ClaudeCodeHooks {
     hooksInstalled: boolean
     allToolsInstalled: boolean
     promptHookInstalled: boolean
+    mcpInstalled: boolean
     hooks: string[]
   } {
     const claudeInstalled = this.isClaudeInstalled()
@@ -251,6 +280,7 @@ export class ClaudeCodeHooks {
     const hooksInstalled = this.isInstalled(settings)
     const allToolsInstalled = this.isAllToolsInstalled(settings)
     const promptHookInstalled = this.isPromptHookInstalled(settings)
+    const mcpInstalled = this.isMCPInstalled(settings)
 
     const hooks: string[] = []
     if (settings.hooks?.PreToolUse) hooks.push('PreToolUse (gate)')
@@ -259,12 +289,14 @@ export class ClaudeCodeHooks {
     if (settings.hooks?.SessionStart) hooks.push('SessionStart (session-start)')
     if (allToolsInstalled) hooks.push('PostToolUse (all-tools)')
     if (promptHookInstalled) hooks.push('UserPromptSubmit (prompt)')
+    if (mcpInstalled) hooks.push('MCP Server (bashbros)')
 
     return {
       claudeInstalled,
       hooksInstalled,
       allToolsInstalled,
       promptHookInstalled,
+      mcpInstalled,
       hooks
     }
   }
