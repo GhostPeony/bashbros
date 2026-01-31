@@ -11,7 +11,7 @@ describe('CommandFilter', () => {
       const result = filter.check('rm -rf /')
       expect(result).not.toBeNull()
       expect(result?.type).toBe('command')
-      expect(result?.message).toContain('blocked')
+      expect(result?.message).toContain('Blocked')
     })
 
     it('blocks glob pattern', () => {
@@ -67,6 +67,26 @@ describe('CommandFilter', () => {
       })
       expect(filter.check('git status')).toBeNull()
       expect(filter.check('GIT STATUS')).toBeNull()
+    })
+  })
+
+  describe('enhanced violation messages', () => {
+    it('includes remediation for blocked pattern', () => {
+      const filter = new CommandFilter({ allow: ['git *'], block: ['rm -rf *'] })
+      const result = filter.check('rm -rf /')
+      expect(result).not.toBeNull()
+      expect(result!.remediation).toBeDefined()
+      expect(result!.remediation!.length).toBeGreaterThan(0)
+      expect(result!.severity).toBe('high')
+    })
+
+    it('includes remediation for not-in-allowlist', () => {
+      const filter = new CommandFilter({ allow: ['git *'], block: [] })
+      const result = filter.check('curl http://example.com')
+      expect(result).not.toBeNull()
+      expect(result!.remediation).toBeDefined()
+      expect(result!.remediation!.some(r => r.includes('bashbros allow'))).toBe(true)
+      expect(result!.severity).toBe('medium')
     })
   })
 

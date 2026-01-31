@@ -16,7 +16,11 @@ export class CommandFilter {
         return {
           type: 'command',
           rule: `block[${i}]: ${this.policy.block[i]}`,
-          message: `Command matches blocked pattern: ${this.policy.block[i]}`
+          message: `Blocked: '${command.slice(0, 60)}' matches dangerous pattern: ${this.policy.block[i]}`,
+          remediation: [
+            `If safe, run: bashbros allow "${this.extractBase(command)} *" --once`
+          ],
+          severity: 'high'
         }
       }
     }
@@ -33,11 +37,20 @@ export class CommandFilter {
       return {
         type: 'command',
         rule: 'allow (no match)',
-        message: 'Command not in allowlist'
+        message: `Blocked: '${command.slice(0, 60)}' not in allowlist`,
+        remediation: [
+          `To allow for this session: bashbros allow "${this.extractBase(command)} *" --once`,
+          `To allow permanently: add "${this.extractBase(command)} *" to .bashbros.yml commands.allow`
+        ],
+        severity: 'medium'
       }
     }
 
     return null
+  }
+
+  private extractBase(command: string): string {
+    return command.split(/\s+/)[0] || command
   }
 
   private globToRegex(glob: string): RegExp {

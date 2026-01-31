@@ -19,7 +19,12 @@ export class RateLimiter {
       return {
         type: 'rate_limit',
         rule: `maxPerMinute: ${this.policy.maxPerMinute}`,
-        message: `Rate limit exceeded: ${this.minuteWindow.length}/${this.policy.maxPerMinute} commands per minute`
+        message: `Rate limited: ${this.minuteWindow.length}/${this.policy.maxPerMinute} commands per minute`,
+        remediation: [
+          'Wait a few seconds before the next command',
+          'Or adjust: set rateLimit.maxPerMinute in .bashbros.yml'
+        ],
+        severity: 'medium'
       }
     }
 
@@ -28,7 +33,12 @@ export class RateLimiter {
       return {
         type: 'rate_limit',
         rule: `maxPerHour: ${this.policy.maxPerHour}`,
-        message: `Rate limit exceeded: ${this.hourWindow.length}/${this.policy.maxPerHour} commands per hour`
+        message: `Rate limited: ${this.hourWindow.length}/${this.policy.maxPerHour} commands per hour`,
+        remediation: [
+          'Command throughput limit reached for this hour',
+          'Or adjust: set rateLimit.maxPerHour in .bashbros.yml'
+        ],
+        severity: 'medium'
       }
     }
 

@@ -24,7 +24,9 @@ export class PathSandbox {
         return {
           type: 'path',
           rule: 'symlink_escape',
-          message: `Symlink escape detected: ${path} -> ${realPath}`
+          message: `Blocked: symlink escape detected: ${path} -> ${realPath}`,
+          remediation: ['Use the real path directly instead of the symlink'],
+          severity: 'critical'
         }
       }
     }
@@ -35,7 +37,9 @@ export class PathSandbox {
         return {
           type: 'path',
           rule: `block: ${blocked}`,
-          message: `Access to path is blocked: ${path}`
+          message: `Blocked: ${path} is a protected path`,
+          remediation: [`To allow for this session: bashbros allow-path "${path}" --once`],
+          severity: 'high'
         }
       }
     }
@@ -55,7 +59,12 @@ export class PathSandbox {
       return {
         type: 'path',
         rule: 'allow (outside sandbox)',
-        message: `Path is outside allowed directories: ${path}`
+        message: `Blocked: ${path} is outside allowed directories`,
+        remediation: [
+          `Allowed dirs: ${this.policy.allow.join(', ')}`,
+          `To allow: add the path to .bashbros.yml paths.allow`
+        ],
+        severity: 'medium'
       }
     }
 

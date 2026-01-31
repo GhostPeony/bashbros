@@ -12,6 +12,8 @@ export interface ClaudeSettings {
     PreToolUse?: HookConfig[]
     PostToolUse?: HookConfig[]
     SessionEnd?: HookConfig[]
+    SessionStart?: HookConfig[]
+    UserPromptSubmit?: HookConfig[]
   }
   [key: string]: unknown
 }
@@ -27,6 +29,7 @@ const CLAUDE_DIR = join(homedir(), '.claude')
 const BASHBROS_HOOK_MARKER = '# bashbros-managed'
 // Use --marker flag for Windows compatibility (ignored by the command but lets us identify our hooks)
 const BASHBROS_ALL_TOOLS_MARKER = '--marker=bashbros-all-tools'
+const BASHBROS_PROMPT_MARKER = '--marker=bashbros-prompt'
 
 export class ClaudeCodeHooks {
   /**
@@ -135,6 +138,19 @@ export class ClaudeCodeHooks {
       sessionEndHook
     ]
 
+    // Add SessionStart hook for session initialization
+    const sessionStartHook: HookConfig = {
+      hooks: [{
+        type: 'command',
+        command: `bashbros session-start ${BASHBROS_HOOK_MARKER}`
+      }]
+    }
+
+    settings.hooks.SessionStart = [
+      ...(settings.hooks.SessionStart || []),
+      sessionStartHook
+    ]
+
     this.saveSettings(settings)
 
     return {
@@ -174,11 +190,21 @@ export class ClaudeCodeHooks {
     settings.hooks.PreToolUse = filterHooks(settings.hooks.PreToolUse)
     settings.hooks.PostToolUse = filterHooks(settings.hooks.PostToolUse)
     settings.hooks.SessionEnd = filterHooks(settings.hooks.SessionEnd)
+    settings.hooks.SessionStart = filterHooks(settings.hooks.SessionStart)
+
+    // Also remove prompt hooks
+    if (settings.hooks.UserPromptSubmit) {
+      settings.hooks.UserPromptSubmit = settings.hooks.UserPromptSubmit.filter(h =>
+        !h.hooks.some(hook => hook.command.includes(BASHBROS_PROMPT_MARKER))
+      )
+    }
 
     // Clean up empty arrays
     if (settings.hooks.PreToolUse?.length === 0) delete settings.hooks.PreToolUse
     if (settings.hooks.PostToolUse?.length === 0) delete settings.hooks.PostToolUse
     if (settings.hooks.SessionEnd?.length === 0) delete settings.hooks.SessionEnd
+    if (settings.hooks.SessionStart?.length === 0) delete settings.hooks.SessionStart
+    if (settings.hooks.UserPromptSubmit?.length === 0) delete settings.hooks.UserPromptSubmit
     if (Object.keys(settings.hooks).length === 0) delete settings.hooks
 
     this.saveSettings(settings)
@@ -206,7 +232,8 @@ export class ClaudeCodeHooks {
 
     return hasMarker(s.hooks.PreToolUse) ||
            hasMarker(s.hooks.PostToolUse) ||
-           hasMarker(s.hooks.SessionEnd)
+           hasMarker(s.hooks.SessionEnd) ||
+           hasMarker(s.hooks.SessionStart)
   }
 
   /**
@@ -216,23 +243,28 @@ export class ClaudeCodeHooks {
     claudeInstalled: boolean
     hooksInstalled: boolean
     allToolsInstalled: boolean
+    promptHookInstalled: boolean
     hooks: string[]
   } {
     const claudeInstalled = this.isClaudeInstalled()
     const settings = claudeInstalled ? this.loadSettings() : {}
     const hooksInstalled = this.isInstalled(settings)
     const allToolsInstalled = this.isAllToolsInstalled(settings)
+    const promptHookInstalled = this.isPromptHookInstalled(settings)
 
     const hooks: string[] = []
     if (settings.hooks?.PreToolUse) hooks.push('PreToolUse (gate)')
     if (settings.hooks?.PostToolUse) hooks.push('PostToolUse (record)')
     if (settings.hooks?.SessionEnd) hooks.push('SessionEnd (report)')
+    if (settings.hooks?.SessionStart) hooks.push('SessionStart (session-start)')
     if (allToolsInstalled) hooks.push('PostToolUse (all-tools)')
+    if (promptHookInstalled) hooks.push('UserPromptSubmit (prompt)')
 
     return {
       claudeInstalled,
       hooksInstalled,
       allToolsInstalled,
+      promptHookInstalled,
       hooks
     }
   }
@@ -344,6 +376,101 @@ export class ClaudeCodeHooks {
     return {
       success: true,
       message: 'BashBros all-tools recording uninstalled.'
+    }
+  }
+  /**
+   * Check if prompt recording hook is installed
+   */
+  static isPromptHookInstalled(settings?: ClaudeSettings): boolean {
+    const s = settings || this.loadSettings()
+
+    if (!s.hooks?.UserPromptSubmit) return false
+
+    return s.hooks.UserPromptSubmit.some(h =>
+      h.hooks.some(hook => hook.command.includes(BASHBROS_PROMPT_MARKER))
+    )
+  }
+
+  /**
+   * Install prompt recording hook (records user prompt submissions)
+   */
+  static installPromptHook(): { success: boolean; message: string } {
+    if (!this.isClaudeInstalled()) {
+      return {
+        success: false,
+        message: 'Claude Code not found. Install Claude Code first.'
+      }
+    }
+
+    const settings = this.loadSettings()
+
+    if (!settings.hooks) {
+      settings.hooks = {}
+    }
+
+    if (this.isPromptHookInstalled(settings)) {
+      return {
+        success: true,
+        message: 'BashBros prompt recording already installed.'
+      }
+    }
+
+    const promptHook: HookConfig = {
+      hooks: [{
+        type: 'command',
+        command: `bashbros record-prompt ${BASHBROS_PROMPT_MARKER}`
+      }]
+    }
+
+    settings.hooks.UserPromptSubmit = [
+      ...(settings.hooks.UserPromptSubmit || []),
+      promptHook
+    ]
+
+    this.saveSettings(settings)
+
+    return {
+      success: true,
+      message: 'BashBros prompt recording installed. User prompts will now be recorded.'
+    }
+  }
+
+  /**
+   * Uninstall prompt recording hook
+   */
+  static uninstallPromptHook(): { success: boolean; message: string } {
+    if (!this.isClaudeInstalled()) {
+      return {
+        success: false,
+        message: 'Claude Code not found.'
+      }
+    }
+
+    const settings = this.loadSettings()
+
+    if (!settings.hooks?.UserPromptSubmit) {
+      return {
+        success: true,
+        message: 'No prompt hook to uninstall.'
+      }
+    }
+
+    settings.hooks.UserPromptSubmit = settings.hooks.UserPromptSubmit.filter(h =>
+      !h.hooks.some(hook => hook.command.includes(BASHBROS_PROMPT_MARKER))
+    )
+
+    if (settings.hooks.UserPromptSubmit.length === 0) {
+      delete settings.hooks.UserPromptSubmit
+    }
+    if (Object.keys(settings.hooks).length === 0) {
+      delete settings.hooks
+    }
+
+    this.saveSettings(settings)
+
+    return {
+      success: true,
+      message: 'BashBros prompt recording uninstalled.'
     }
   }
 }

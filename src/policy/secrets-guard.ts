@@ -74,7 +74,12 @@ export class SecretsGuard {
         return {
           type: 'secrets',
           rule: `pattern match: ${path}`,
-          message: `Attempted access to sensitive file: ${path}`
+          message: `Blocked: command accesses ${path} (sensitive file)`,
+          remediation: [
+            'Risk: credential or secret exposure',
+            `To allow: bashbros allow "${command.split(/\s+/)[0]} ${path}" --once`
+          ],
+          severity: 'critical'
         }
       }
     }
@@ -175,7 +180,12 @@ export class SecretsGuard {
         return {
           type: 'secrets',
           rule: 'dangerous pattern',
-          message: 'Command may expose secrets'
+          message: 'Blocked: command may expose secrets',
+          remediation: [
+            'Risk: credential exposure via command pattern',
+            'Review the command carefully before allowing'
+          ],
+          severity: 'high'
         }
       }
     }
@@ -185,7 +195,12 @@ export class SecretsGuard {
       return {
         type: 'secrets',
         rule: 'encoded command',
-        message: 'Command contains encoded secret access attempt'
+        message: 'Blocked: command contains encoded secret access attempt',
+        remediation: [
+          'Risk: obfuscated credential access detected',
+          'This command appears to use encoding to bypass secret detection'
+        ],
+        severity: 'critical'
       }
     }
 

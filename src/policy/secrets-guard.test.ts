@@ -206,6 +206,16 @@ describe('SecretsGuard', () => {
     })
   })
 
+  describe('enhanced violation messages', () => {
+    it('includes remediation for sensitive file access', () => {
+      const guard = new SecretsGuard({ enabled: true, mode: 'block', patterns: ['.env*', '*.pem'] })
+      const result = guard.check('cat .env', ['.env'])
+      expect(result).not.toBeNull()
+      expect(result!.remediation).toBeDefined()
+      expect(result!.severity).toBe('critical')
+    })
+  })
+
   describe('safe commands', () => {
     it('allows normal file operations', () => {
       const guard = new SecretsGuard(defaultPolicy)

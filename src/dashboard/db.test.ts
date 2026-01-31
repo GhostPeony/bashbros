@@ -112,4 +112,101 @@ describe('DashboardDB', () => {
       expect(stats.eventsBySource.policy).toBe(1)
     })
   })
+
+  describe('searchCommands', () => {
+    const insertTestCommand = (command: string) => {
+      db.insertCommand({
+        command,
+        allowed: true,
+        riskScore: 1,
+        riskLevel: 'safe',
+        riskFactors: [],
+        durationMs: 100,
+        violations: []
+      })
+    }
+
+    it('should find commands matching a query substring', () => {
+      insertTestCommand('git status')
+      insertTestCommand('git commit -m "fix bug"')
+      insertTestCommand('npm install express')
+
+      const results = db.searchCommands('git')
+      expect(results.length).toBe(2)
+      expect(results.every(r => r.command.includes('git'))).toBe(true)
+    })
+
+    it('should respect limit parameter', () => {
+      insertTestCommand('git status')
+      insertTestCommand('git diff')
+      insertTestCommand('git log')
+      insertTestCommand('git push')
+      insertTestCommand('git pull')
+
+      const results = db.searchCommands('git', 3)
+      expect(results.length).toBe(3)
+    })
+
+    it('should return empty array for no matches', () => {
+      insertTestCommand('git status')
+      insertTestCommand('npm install')
+
+      const results = db.searchCommands('docker')
+      expect(results).toEqual([])
+    })
+
+    it('should be case-insensitive for ASCII characters', () => {
+      insertTestCommand('Git Status')
+      insertTestCommand('GIT COMMIT')
+      insertTestCommand('npm install')
+
+      const results = db.searchCommands('git')
+      expect(results.length).toBe(2)
+    })
+
+    it('should return CommandRecord objects with correct fields', () => {
+      db.insertCommand({
+        command: 'rm -rf /tmp/test',
+        allowed: false,
+        riskScore: 9,
+        riskLevel: 'critical',
+        riskFactors: ['recursive-delete', 'root-path'],
+        durationMs: 50,
+        violations: ['blocked-pattern']
+      })
+
+      const results = db.searchCommands('rm')
+      expect(results.length).toBe(1)
+      const cmd = results[0]
+      expect(cmd.id).toBeDefined()
+      expect(cmd.command).toBe('rm -rf /tmp/test')
+      expect(cmd.allowed).toBe(false)
+      expect(cmd.riskScore).toBe(9)
+      expect(cmd.riskLevel).toBe('critical')
+      expect(cmd.riskFactors).toEqual(['recursive-delete', 'root-path'])
+      expect(cmd.durationMs).toBe(50)
+      expect(cmd.violations).toEqual(['blocked-pattern'])
+      expect(cmd.timestamp).toBeInstanceOf(Date)
+    })
+
+    it('should order results by timestamp descending', () => {
+      insertTestCommand('git first')
+      insertTestCommand('git second')
+      insertTestCommand('git third')
+
+      const results = db.searchCommands('git')
+      // Most recent first
+      expect(results[0].command).toBe('git third')
+      expect(results[2].command).toBe('git first')
+    })
+
+    it('should use default limit of 50', () => {
+      for (let i = 0; i < 60; i++) {
+        insertTestCommand(`test command ${i}`)
+      }
+
+      const results = db.searchCommands('test')
+      expect(results.length).toBe(50)
+    })
+  })
 })

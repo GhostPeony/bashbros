@@ -84,6 +84,7 @@ export interface SessionRecord {
   avgRiskScore: number
   workingDir: string
   repoName: string | null
+  metadata: Record<string, unknown>
 }
 
 export interface CommandRecord {
@@ -207,6 +208,44 @@ export interface ToolUseFilter {
   since?: Date
   limit?: number
   offset?: number
+}
+
+// ─────────────────────────────────────────────────────────────
+// User Prompt Types
+// ─────────────────────────────────────────────────────────────
+
+export interface UserPromptRecord {
+  id: string
+  sessionId: string | null
+  timestamp: Date
+  promptText: string
+  promptLength: number
+  wordCount: number
+  cwd: string | null
+}
+
+export interface InsertUserPromptInput {
+  sessionId?: string
+  promptText: string
+  cwd?: string
+}
+
+export interface UserPromptFilter {
+  sessionId?: string
+  since?: Date
+  limit?: number
+  offset?: number
+}
+
+export interface UserPromptStats {
+  totalPrompts: number
+  totalWords: number
+  totalChars: number
+  avgPromptLength: number
+  avgWordCount: number
+  longestPrompt: number
+  last24h: number
+  promptsPerSession: number
 }
 
 export interface SessionFilter {
@@ -390,6 +429,20 @@ export class DashboardDB {
       )
     `)
 
+    // User prompts table - track user prompt submissions
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS user_prompts (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        timestamp TEXT NOT NULL,
+        prompt_text TEXT NOT NULL,
+        prompt_length INTEGER NOT NULL,
+        word_count INTEGER NOT NULL,
+        cwd TEXT,
+        FOREIGN KEY (session_id) REFERENCES sessions(id)
+      )
+    `)
+
     // Adapter events table - track adapter activations
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS adapter_events (
@@ -407,6 +460,7 @@ export class DashboardDB {
     this.migrateToolUsesAddSessionId()
     this.migrateSessionsAddMode()
     this.migrateSessionsAddRepoName()
+    this.migrateSessionsAddMetadata()
 
     // Create indexes for new tables
     this.db.exec(`
@@ -422,6 +476,8 @@ export class DashboardDB {
       CREATE INDEX IF NOT EXISTS idx_tool_uses_tool_name ON tool_uses(tool_name);
       CREATE INDEX IF NOT EXISTS idx_tool_uses_session_id ON tool_uses(session_id);
       CREATE INDEX IF NOT EXISTS idx_adapter_events_timestamp ON adapter_events(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_user_prompts_timestamp ON user_prompts(timestamp);
+      CREATE INDEX IF NOT EXISTS idx_user_prompts_session_id ON user_prompts(session_id);
     `)
   }
 
@@ -832,6 +888,7 @@ export class DashboardDB {
       blocked_count: number
       avg_risk_score: number
       working_dir: string
+      metadata?: string
     } | undefined
 
     if (!row) return null
@@ -948,6 +1005,11 @@ export class DashboardDB {
     return rows.map(row => this.rowToSession(row))
   }
 
+  updateSessionMetadata(id: string, metadata: Record<string, unknown>): void {
+    const stmt = this.db.prepare('UPDATE sessions SET metadata = ? WHERE id = ?')
+    stmt.run(JSON.stringify(metadata), id)
+  }
+
   /**
    * Atomically increment session counters in a single UPDATE.
    * Race-safe for concurrent hook processes (SQLite serializes writes).
@@ -975,6 +1037,7 @@ export class DashboardDB {
     avg_risk_score: number
     working_dir: string
     repo_name?: string | null
+    metadata?: string
   }): SessionRecord {
     return {
       id: row.id,
@@ -987,7 +1050,8 @@ export class DashboardDB {
       blockedCount: row.blocked_count,
       avgRiskScore: row.avg_risk_score,
       workingDir: row.working_dir,
-      repoName: row.repo_name ?? null
+      repoName: row.repo_name ?? null,
+      metadata: JSON.parse(row.metadata || '{}')
     }
   }
 
@@ -1075,6 +1139,30 @@ export class DashboardDB {
 
   getCommandsBySession(sessionId: string, limit: number = 100): CommandRecord[] {
     return this.getCommands({ sessionId, limit })
+  }
+
+  searchCommands(query: string, limit: number = 50): CommandRecord[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM commands
+      WHERE command LIKE ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `)
+
+    const rows = stmt.all(`%${query}%`, limit) as Array<{
+      id: string
+      session_id: string
+      timestamp: string
+      command: string
+      allowed: number
+      risk_score: number
+      risk_level: 'safe' | 'caution' | 'dangerous' | 'critical'
+      risk_factors: string
+      duration_ms: number
+      violations: string
+    }>
+
+    return rows.map(row => this.rowToCommand(row))
   }
 
   getLiveCommands(limit: number = 20): CommandRecord[] {
@@ -1426,6 +1514,119 @@ export class DashboardDB {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // User Prompts
+  // ─────────────────────────────────────────────────────────────
+
+  insertUserPrompt(input: InsertUserPromptInput): string {
+    const id = randomUUID()
+    const timestamp = new Date().toISOString()
+    const originalLength = input.promptText.length
+    // Truncate text to 50KB but preserve original length for stats
+    const promptText = input.promptText.substring(0, 50000)
+    const wordCount = promptText.trim() === '' ? 0 : promptText.trim().split(/\s+/).length
+
+    const stmt = this.db.prepare(`
+      INSERT INTO user_prompts (id, session_id, timestamp, prompt_text, prompt_length, word_count, cwd)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    stmt.run(
+      id,
+      input.sessionId ?? null,
+      timestamp,
+      promptText,
+      originalLength,
+      wordCount,
+      input.cwd ?? null
+    )
+
+    return id
+  }
+
+  getUserPrompts(filter: UserPromptFilter = {}): UserPromptRecord[] {
+    const conditions: string[] = []
+    const params: unknown[] = []
+
+    if (filter.sessionId) {
+      conditions.push('session_id = ?')
+      params.push(filter.sessionId)
+    }
+    if (filter.since) {
+      conditions.push('timestamp >= ?')
+      params.push(filter.since.toISOString())
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+    const limit = filter.limit ?? 100
+    const offset = filter.offset ?? 0
+
+    const stmt = this.db.prepare(`
+      SELECT * FROM user_prompts
+      ${whereClause}
+      ORDER BY timestamp DESC
+      LIMIT ? OFFSET ?
+    `)
+
+    params.push(limit, offset)
+    const rows = stmt.all(...params) as Array<{
+      id: string
+      session_id: string | null
+      timestamp: string
+      prompt_text: string
+      prompt_length: number
+      word_count: number
+      cwd: string | null
+    }>
+
+    return rows.map(row => ({
+      id: row.id,
+      sessionId: row.session_id,
+      timestamp: new Date(row.timestamp),
+      promptText: row.prompt_text,
+      promptLength: row.prompt_length,
+      wordCount: row.word_count,
+      cwd: row.cwd
+    }))
+  }
+
+  getUserPromptStats(): UserPromptStats {
+    const totalRow = this.db.prepare('SELECT COUNT(*) as count FROM user_prompts').get() as { count: number }
+
+    const sumRow = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(word_count), 0) as total_words,
+        COALESCE(SUM(prompt_length), 0) as total_chars,
+        COALESCE(AVG(prompt_length), 0) as avg_length,
+        COALESCE(AVG(word_count), 0) as avg_words,
+        COALESCE(MAX(prompt_length), 0) as longest
+      FROM user_prompts
+    `).get() as { total_words: number; total_chars: number; avg_length: number; avg_words: number; longest: number }
+
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    const last24hRow = this.db.prepare(`
+      SELECT COUNT(*) as count FROM user_prompts WHERE timestamp >= ?
+    `).get(oneDayAgo) as { count: number }
+
+    // Prompts per session (average across sessions that have prompts)
+    const perSessionRow = this.db.prepare(`
+      SELECT COALESCE(AVG(cnt), 0) as avg_per_session FROM (
+        SELECT COUNT(*) as cnt FROM user_prompts WHERE session_id IS NOT NULL GROUP BY session_id
+      )
+    `).get() as { avg_per_session: number }
+
+    return {
+      totalPrompts: totalRow.count,
+      totalWords: sumRow.total_words,
+      totalChars: sumRow.total_chars,
+      avgPromptLength: Math.round(sumRow.avg_length),
+      avgWordCount: Math.round(sumRow.avg_words),
+      longestPrompt: sumRow.longest,
+      last24h: last24hRow.count,
+      promptsPerSession: Math.round(perSessionRow.avg_per_session)
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Session Metrics
   // ─────────────────────────────────────────────────────────────
 
@@ -1714,9 +1915,10 @@ export class DashboardDB {
     const broEventsDeleted = this.db.prepare('DELETE FROM bro_events WHERE timestamp < ?').run(cutoff).changes
     const broStatusDeleted = this.db.prepare('DELETE FROM bro_status WHERE timestamp < ?').run(cutoff).changes
     const toolUsesDeleted = this.db.prepare('DELETE FROM tool_uses WHERE timestamp < ?').run(cutoff).changes
+    const promptsDeleted = this.db.prepare('DELETE FROM user_prompts WHERE timestamp < ?').run(cutoff).changes
 
     return eventsDeleted + connectorDeleted + blocksDeleted + exposuresDeleted +
-           commandsDeleted + sessionsDeleted + broEventsDeleted + broStatusDeleted + toolUsesDeleted
+           commandsDeleted + sessionsDeleted + broEventsDeleted + broStatusDeleted + toolUsesDeleted + promptsDeleted
   }
 
   /**
@@ -1758,6 +1960,21 @@ export class DashboardDB {
       const hasRepoName = tableInfo.some(col => col.name === 'repo_name')
       if (!hasRepoName) {
         this.db.exec('ALTER TABLE sessions ADD COLUMN repo_name TEXT')
+      }
+    } catch {
+      // Table doesn't exist yet or already migrated
+    }
+  }
+
+  /**
+   * Migration: add metadata column to sessions table
+   */
+  private migrateSessionsAddMetadata(): void {
+    try {
+      const tableInfo = this.db.pragma('table_info(sessions)') as Array<{ name: string }>
+      const hasMetadata = tableInfo.some(col => col.name === 'metadata')
+      if (!hasMetadata) {
+        this.db.exec("ALTER TABLE sessions ADD COLUMN metadata TEXT DEFAULT '{}'")
       }
     } catch {
       // Table doesn't exist yet or already migrated
@@ -1827,6 +2044,11 @@ export class DashboardDB {
     // Repo
     { id: 'home_base', name: 'Home Base', description: 'Protect a repo', category: 'repo', icon: '\ud83c\udfe0', stat: 'uniqueRepos', tiers: [1, 1, 1, 1, 1] },
     { id: 'empire', name: 'Empire', description: 'Protect multiple repos', category: 'repo', icon: '\ud83c\udff0', stat: 'uniqueRepos', tiers: [3, 5, 10, 25, 50] },
+    // Prompt
+    { id: 'conversationalist', name: 'Conversationalist', description: 'Submit prompts', category: 'prompt', icon: '\ud83d\udcac', stat: 'totalPrompts', tiers: [1, 50, 500, 5000, 50000] },
+    { id: 'wordsmith', name: 'Wordsmith', description: 'Total words prompted', category: 'prompt', icon: '\u270d', stat: 'totalPromptWords', tiers: [100, 1000, 10000, 100000, 1000000] },
+    { id: 'novelist', name: 'Novelist', description: 'Longest single prompt', category: 'prompt', icon: '\ud83d\udcd6', stat: 'longestPromptLength', tiers: [500, 1000, 2000, 5000, 10000] },
+    { id: 'chatty', name: 'Chatty', description: 'Prompts per session avg', category: 'prompt', icon: '\ud83d\udde3', stat: 'promptsPerSession', tiers: [5, 10, 25, 50, 100] },
   ]
 
   getAchievementStats(): AchievementStats {
@@ -1953,6 +2175,34 @@ export class DashboardDB {
       'SELECT COUNT(*) as c FROM commands WHERE risk_score >= 8'
     ).get() as any).c
 
+    // Prompt stats (backward compat: try/catch for DBs without user_prompts table)
+    let totalPrompts = 0
+    let totalPromptWords = 0
+    let totalPromptChars = 0
+    let longestPromptLength = 0
+    let promptsPerSession = 0
+    try {
+      totalPrompts = (this.db.prepare('SELECT COUNT(*) as c FROM user_prompts').get() as any).c
+      const promptSums = this.db.prepare(`
+        SELECT
+          COALESCE(SUM(word_count), 0) as words,
+          COALESCE(SUM(prompt_length), 0) as chars,
+          COALESCE(MAX(prompt_length), 0) as longest
+        FROM user_prompts
+      `).get() as any
+      totalPromptWords = promptSums.words
+      totalPromptChars = promptSums.chars
+      longestPromptLength = promptSums.longest
+      const perSessionRow = this.db.prepare(`
+        SELECT COALESCE(AVG(cnt), 0) as avg FROM (
+          SELECT COUNT(*) as cnt FROM user_prompts WHERE session_id IS NOT NULL GROUP BY session_id
+        )
+      `).get() as any
+      promptsPerSession = Math.round(perSessionRow.avg)
+    } catch {
+      // Table may not exist in older DBs
+    }
+
     return {
       totalCommands, totalBlocked, totalSessions, totalCharacters,
       totalWatchTimeMinutes, uniqueRepos, memberSince,
@@ -1962,6 +2212,7 @@ export class DashboardDB {
       avgCommandsPerSession, longestSessionMinutes, lateNightCount,
       lifetimeAvgRisk, cleanestStreak, currentCleanStreak: currentStreak,
       highestRiskCommand, highestRiskScore, highRiskCount,
+      totalPrompts, totalPromptWords, totalPromptChars, longestPromptLength, promptsPerSession,
     }
   }
 
@@ -2016,6 +2267,10 @@ export class DashboardDB {
     totalXP += stats.lateNightCount * 2
     // +25 per 100-clean-streak segments
     totalXP += Math.floor(stats.cleanestStreak / 100) * 25
+    // +1 per 2 prompts
+    totalXP += Math.floor(stats.totalPrompts / 2)
+    // +1 per 500 prompt words
+    totalXP += Math.floor(stats.totalPromptWords / 500)
 
     // Badge tier XP
     for (const badge of badges) {
@@ -2125,6 +2380,12 @@ export interface AchievementStats {
   highestRiskCommand: string | null
   highestRiskScore: number
   highRiskCount: number
+  // Prompt stats
+  totalPrompts: number
+  totalPromptWords: number
+  totalPromptChars: number
+  longestPromptLength: number
+  promptsPerSession: number
 }
 
 export interface XPResult {
