@@ -1748,7 +1748,7 @@
   <!-- Header -->
   <header class="header">
     <div class="logo">
-      <span class="logo-slash">/</span>BashBros Dashboard
+      <span class="logo-slash">/</span>BashBros Dashboard <span style="font-size:0.7rem; font-weight:400; color:var(--grey-500); margin-left:4px;">MCP Sidekick for Claude Code</span>
     </div>
     <div class="header-right">
       <div class="connection-status">
@@ -1763,7 +1763,7 @@
     <button class="nav-tab active" data-tab="live">Live</button>
     <button class="nav-tab" data-tab="sessions">Sessions</button>
     <button class="nav-tab" data-tab="security">Security <span class="nav-badge" id="securityBadge" style="display:none">0</span></button>
-    <button class="nav-tab" data-tab="bro">Bash Bro</button>
+    <button class="nav-tab" data-tab="bro">MCP Sidekick</button>
     <button class="nav-tab" data-tab="models">Models</button>
     <button class="nav-tab" data-tab="context">Context</button>
     <button class="nav-tab" data-tab="achievements">Achievements</button>
@@ -1950,15 +1950,15 @@
       </div>
     </div>
 
-    <!-- Bash Bro Tab -->
+    <!-- MCP Sidekick Tab -->
     <div id="bro" class="tab-content">
-      <!-- Bro Status Panel -->
+      <!-- MCP Sidekick Status Panel -->
       <div class="card">
         <div class="bro-status-panel">
-          <div class="bro-avatar">AI</div>
+          <div class="bro-avatar">MCP</div>
           <div class="bro-info">
             <div class="bro-title">
-              Bash Bro
+              MCP Sidekick
               <span class="status-dot" id="broStatusDot"></span>
             </div>
             <div class="bro-subtitle" id="broModelInfo">Checking Ollama connection...</div>
@@ -1987,7 +1987,7 @@
               <div class="stat-value" id="broProjectType" style="font-size: 1.2rem;">-</div>
             </div>
             <div class="stat-card">
-              <div class="stat-label">AI Requests Today</div>
+              <div class="stat-label">MCP Requests Today</div>
               <div class="stat-value info" id="broRequestsToday">0</div>
             </div>
             <div class="stat-card">
@@ -2002,10 +2002,43 @@
         </div>
       </div>
 
-      <!-- Bro Activity Log -->
+      <!-- MCP Tools -->
+      <div class="card">
+        <div class="card-header">MCP Tools <span style="font-size:0.75rem; font-weight:400; color:var(--grey-600);">Available via Claude Code MCP integration</span></div>
+        <div class="card-body">
+          <div class="grid-3" style="gap:16px;">
+            <div style="border:2px solid var(--grey-300); padding:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.9rem; margin-bottom:6px; color:var(--teal-dark);">session_summary</div>
+              <div style="font-size:0.85rem; color:var(--grey-600);">Summarize recent agent sessions with command stats, risk scores, and AI-generated natural language summaries.</div>
+            </div>
+            <div style="border:2px solid var(--grey-300); padding:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.9rem; margin-bottom:6px; color:var(--teal-dark);">trace_search</div>
+              <div style="font-size:0.85rem; color:var(--grey-600);">Search command history across sessions by text query. Filter by session ID. Returns risk levels and violation info.</div>
+            </div>
+            <div style="border:2px solid var(--grey-300); padding:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.9rem; margin-bottom:6px; color:var(--teal-dark);">history_suggest</div>
+              <div style="font-size:0.85rem; color:var(--grey-600);">Get smart command suggestions based on recent command history, output context, and working directory patterns.</div>
+            </div>
+            <div style="border:2px solid var(--grey-300); padding:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.9rem; margin-bottom:6px; color:var(--teal-dark);">secret_scan</div>
+              <div style="font-size:0.85rem; color:var(--grey-600);">Scan text for leaked secrets, API keys, tokens, and credentials. Returns findings with severity and redacted previews.</div>
+            </div>
+            <div style="border:2px solid var(--grey-300); padding:14px;">
+              <div style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.9rem; margin-bottom:6px; color:var(--teal-dark);">code_task</div>
+              <div style="font-size:0.85rem; color:var(--grey-600);">Offload code tasks to the local Ollama model. Capability tiers: <strong>basic</strong> (&lt;14B), <strong>moderate</strong> (14-33B), <strong>advanced</strong> (33B+).</div>
+            </div>
+            <div style="border:2px solid var(--grey-300); padding:14px; background:var(--grey-50);">
+              <div style="font-family:'JetBrains Mono',monospace; font-weight:700; font-size:0.9rem; margin-bottom:6px; color:var(--grey-500);">Claude Code Integration</div>
+              <div style="font-size:0.85rem; color:var(--grey-600);">BashBros runs as an MCP server inside Claude Code. Install with <code style="background:var(--grey-200); padding:2px 6px; font-size:0.8rem;">npx bashbros mcp</code> to register all 5 tools.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- MCP Activity Log -->
       <div class="card">
         <div class="card-header">
-          AI Activity Log
+          MCP Activity Log
           <button class="btn btn-small" onclick="fetchBroEvents()">Refresh</button>
         </div>
         <div class="card-body">
@@ -2132,14 +2165,14 @@
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">Adapter Assignments (purpose → adapter name)</label>
+              <label class="form-label">Adapter Assignments (MCP tool → adapter name)</label>
               <div class="grid-3" style="gap:12px;">
                 <div><label style="font-size:0.8rem; color:var(--grey-600);">suggest</label><input class="form-input" id="profileAdapterSuggest" placeholder="adapter name"></div>
                 <div><label style="font-size:0.8rem; color:var(--grey-600);">safety</label><input class="form-input" id="profileAdapterSafety" placeholder="adapter name"></div>
                 <div><label style="font-size:0.8rem; color:var(--grey-600);">route</label><input class="form-input" id="profileAdapterRoute" placeholder="adapter name"></div>
-                <div><label style="font-size:0.8rem; color:var(--grey-600);">explain</label><input class="form-input" id="profileAdapterExplain" placeholder="adapter name"></div>
-                <div><label style="font-size:0.8rem; color:var(--grey-600);">fix</label><input class="form-input" id="profileAdapterFix" placeholder="adapter name"></div>
-                <div><label style="font-size:0.8rem; color:var(--grey-600);">script</label><input class="form-input" id="profileAdapterScript" placeholder="adapter name"></div>
+                <div><label style="font-size:0.8rem; color:var(--grey-600);">session_summary</label><input class="form-input" id="profileAdapterSessionSummary" placeholder="adapter name"></div>
+                <div><label style="font-size:0.8rem; color:var(--grey-600);">code_task</label><input class="form-input" id="profileAdapterCodeTask" placeholder="adapter name"></div>
+                <div><label style="font-size:0.8rem; color:var(--grey-600);">secret_scan</label><input class="form-input" id="profileAdapterSecretScan" placeholder="adapter name"></div>
               </div>
             </div>
             <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
@@ -3352,20 +3385,24 @@
     function getEventIcon(type) {
       const icons = {
         'suggestion': '?',
-        'explanation': 'i',
-        'fix': 'F',
-        'script': 'S',
+        'session_summary': 'S',
+        'trace_search': 'T',
+        'history_suggest': 'H',
+        'secret_scan': '!',
+        'code_task': 'C',
         'safety': '!'
       };
-      return icons[type] || 'AI';
+      return icons[type] || 'MCP';
     }
 
     function formatEventType(type) {
       const names = {
         'suggestion': 'Command Suggestion',
-        'explanation': 'Command Explanation',
-        'fix': 'Error Fix',
-        'script': 'Script Generation',
+        'session_summary': 'Session Summary',
+        'trace_search': 'Trace Search',
+        'history_suggest': 'History Suggest',
+        'secret_scan': 'Secret Scan',
+        'code_task': 'Code Task',
         'safety': 'Safety Analysis'
       };
       return names[type] || type;
@@ -4360,9 +4397,16 @@
       }
 
       const adapters = {};
-      const purposes = ['suggest', 'safety', 'route', 'explain', 'fix', 'script'];
-      for (const purpose of purposes) {
-        const val = document.getElementById(`profileAdapter${purpose.charAt(0).toUpperCase() + purpose.slice(1)}`).value.trim();
+      const purposeToId = {
+        'suggest': 'Suggest',
+        'safety': 'Safety',
+        'route': 'Route',
+        'session_summary': 'SessionSummary',
+        'code_task': 'CodeTask',
+        'secret_scan': 'SecretScan'
+      };
+      for (const [purpose, idSuffix] of Object.entries(purposeToId)) {
+        const val = document.getElementById(`profileAdapter${idSuffix}`).value.trim();
         if (val) adapters[purpose] = val;
       }
 
@@ -4379,7 +4423,7 @@
           // Clear form
           document.getElementById('profileName').value = '';
           document.getElementById('profileBaseModel').value = '';
-          purposes.forEach(p => document.getElementById(`profileAdapter${p.charAt(0).toUpperCase() + p.slice(1)}`).value = '');
+          Object.values(purposeToId).forEach(s => document.getElementById(`profileAdapter${s}`).value = '');
         } else {
           showToast('Failed to save profile', 'error');
         }
@@ -4396,9 +4440,12 @@
         document.getElementById('profileName').value = profile.name;
         document.getElementById('profileBaseModel').value = profile.baseModel;
 
-        const purposes = ['suggest', 'safety', 'route', 'explain', 'fix', 'script'];
-        purposes.forEach(p => {
-          const el = document.getElementById(`profileAdapter${p.charAt(0).toUpperCase() + p.slice(1)}`);
+        const loadPurposeToId = {
+          'suggest': 'Suggest', 'safety': 'Safety', 'route': 'Route',
+          'session_summary': 'SessionSummary', 'code_task': 'CodeTask', 'secret_scan': 'SecretScan'
+        };
+        Object.entries(loadPurposeToId).forEach(([p, idSuffix]) => {
+          const el = document.getElementById(`profileAdapter${idSuffix}`);
           el.value = (profile.adapters && profile.adapters[p]) || '';
         });
       });
@@ -4525,7 +4572,7 @@
               if (text) text.textContent = `Pull failed: ${msg.name}`;
             }
             if (msg.type === 'adapter:activated') {
-              showToast(`Adapter activated: ${msg.name}`);
+              showToast(`MCP adapter activated: ${msg.name}`);
               if (activeTab === 'models') {
                 fetchAdapters();
                 fetchInstalledModels();
