@@ -1,6 +1,6 @@
 {
   "name": "bashbros",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Security middleware and AI sidekick for CLI agents - policy engine, Ollama integration, LoRA adapters, shared context store, and real-time dashboard",
   "type": "module",
   "main": "dist/index.js",
