@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { SecretsGuard } from './secrets-guard.js'
+import type { TextScanFinding, TextScanResult } from './secrets-guard.js'
 
 describe('SecretsGuard', () => {
   const defaultPolicy = {
@@ -217,6 +218,62 @@ describe('SecretsGuard', () => {
       const guard = new SecretsGuard(defaultPolicy)
       expect(guard.check('echo $HOME', [])).toBeNull()
       expect(guard.check('echo $PATH', [])).toBeNull()
+    })
+  })
+
+  describe('scanText', () => {
+    it('detects AWS access key', () => {
+      const guard = new SecretsGuard(defaultPolicy)
+      const result = guard.scanText('config:\n  access_key: AKIAIOSFODNN7EXAMPLE')
+      expect(result.clean).toBe(false)
+      expect(result.findings).toHaveLength(1)
+      expect(result.findings[0].pattern).toBe('AWS Access Key')
+      expect(result.findings[0].severity).toBe('critical')
+    })
+
+    it('detects GitHub token (ghp_...)', () => {
+      const guard = new SecretsGuard(defaultPolicy)
+      const result = guard.scanText('GITHUB_TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn')
+      expect(result.clean).toBe(false)
+      expect(result.findings.some(f => f.pattern === 'GitHub Token')).toBe(true)
+    })
+
+    it('returns clean for safe text', () => {
+      const guard = new SecretsGuard(defaultPolicy)
+      const result = guard.scanText('Hello world\nThis is just normal text\nNothing secret here')
+      expect(result.clean).toBe(true)
+      expect(result.findings).toHaveLength(0)
+    })
+
+    it('detects private key blocks', () => {
+      const guard = new SecretsGuard(defaultPolicy)
+      const result = guard.scanText('some preamble\n-----BEGIN RSA PRIVATE KEY-----\nbase64data\n-----END RSA PRIVATE KEY-----')
+      expect(result.clean).toBe(false)
+      expect(result.findings.some(f => f.pattern === 'Private Key')).toBe(true)
+      expect(result.findings.find(f => f.pattern === 'Private Key')!.severity).toBe('critical')
+    })
+
+    it('reports correct line numbers', () => {
+      const guard = new SecretsGuard(defaultPolicy)
+      const text = 'line one\nline two\nAKIAIOSFODNN7EXAMPLE\nline four'
+      const result = guard.scanText(text)
+      expect(result.findings[0].line).toBe(3)
+    })
+
+    it('redacts matched text (first 4 chars + *** + last 2 chars)', () => {
+      const guard = new SecretsGuard(defaultPolicy)
+      const result = guard.scanText('AKIAIOSFODNN7EXAMPLE')
+      expect(result.findings).toHaveLength(1)
+      const redacted = result.findings[0].redacted
+      // AKIAIOSFODNN7EXAMPLE => first 4 = "AKIA", last 2 = "LE"
+      expect(redacted).toBe('AKIA***LE')
+    })
+
+    it('returns clean when policy is disabled', () => {
+      const guard = new SecretsGuard({ ...defaultPolicy, enabled: false })
+      const result = guard.scanText('AKIAIOSFODNN7EXAMPLE\nghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn')
+      expect(result.clean).toBe(true)
+      expect(result.findings).toHaveLength(0)
     })
   })
 })

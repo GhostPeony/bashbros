@@ -1,10 +1,66 @@
 import type { SecretsPolicy, PolicyViolation } from '../types.js'
 
+export interface TextScanFinding {
+  pattern: string
+  redacted: string
+  line: number
+  severity: 'high' | 'critical'
+}
+
+export interface TextScanResult {
+  clean: boolean
+  findings: TextScanFinding[]
+}
+
 export class SecretsGuard {
   private patterns: RegExp[]
 
+  private static readonly TEXT_PATTERNS: Array<{
+    name: string
+    regex: RegExp
+    severity: 'high' | 'critical'
+  }> = [
+    { name: 'AWS Access Key', regex: /AKIA[0-9A-Z]{16}/g, severity: 'critical' },
+    { name: 'AWS Secret Key', regex: /(?:aws_secret_access_key|secret_key)\s*[=:]\s*[A-Za-z0-9/+=]{40}/gi, severity: 'critical' },
+    { name: 'GitHub Token', regex: /gh[ps]_[A-Za-z0-9_]{36,}/g, severity: 'critical' },
+    { name: 'GitHub Fine-Grained Token', regex: /github_pat_[A-Za-z0-9_]{22,}/g, severity: 'critical' },
+    { name: 'Generic API Key', regex: /(?:api_key|apikey|api-key)\s*[=:]\s*['"]?[A-Za-z0-9_\-]{20,}['"]?/gi, severity: 'high' },
+    { name: 'Private Key', regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g, severity: 'critical' },
+    { name: 'Generic Secret', regex: /(?:secret|password|passwd|token)\s*[=:]\s*['"]?[^\s'"]{8,}['"]?/gi, severity: 'high' },
+    { name: 'Slack Token', regex: /xox[bprs]-[0-9a-zA-Z-]{10,}/g, severity: 'critical' },
+    { name: 'Stripe Key', regex: /[sr]k_(?:live|test)_[A-Za-z0-9]{24,}/g, severity: 'critical' },
+  ]
+
   constructor(private policy: SecretsPolicy) {
     this.patterns = policy.patterns.map(p => this.globToRegex(p))
+  }
+
+  scanText(text: string): TextScanResult {
+    if (!this.policy.enabled) {
+      return { clean: true, findings: [] }
+    }
+
+    const lines = text.split('\n')
+    const findings: TextScanFinding[] = []
+
+    for (const patternDef of SecretsGuard.TEXT_PATTERNS) {
+      for (let i = 0; i < lines.length; i++) {
+        const regex = new RegExp(patternDef.regex.source, patternDef.regex.flags)
+        let match
+        while ((match = regex.exec(lines[i])) !== null) {
+          const matched = match[0]
+          const redacted = matched.substring(0, 4) + '***' + matched.substring(matched.length - 2)
+          findings.push({
+            pattern: patternDef.name,
+            redacted,
+            line: i + 1,
+            severity: patternDef.severity,
+          })
+        }
+      }
+    }
+
+    return { clean: findings.length === 0, findings }
   }
 
   check(command: string, paths: string[]): PolicyViolation | null {
