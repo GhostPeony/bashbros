@@ -363,7 +363,13 @@ export function getDefaultConfig(): BashBrosConfig {
     outputScanning: getDefaultOutputScanning('balanced'),
     undo: getDefaultUndo(),
     ward: getDefaultWard(),
-    dashboard: getDefaultDashboard()
+    dashboard: getDefaultDashboard(),
+    sessionStart: {
+      enabled: true,
+      collectMetadata: true,
+      ollamaStatus: false,
+      preloadContext: true
+    }
   }
 }
 

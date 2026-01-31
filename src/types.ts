@@ -15,6 +15,7 @@ export interface BashBrosConfig {
   // Ward & Dashboard
   ward: WardPolicy
   dashboard: DashboardPolicy
+  sessionStart: SessionStartConfig
 }
 
 export type AgentType =
@@ -148,6 +149,8 @@ export interface PolicyViolation {
   type: 'command' | 'path' | 'secrets' | 'rate_limit' | 'risk_score' | 'loop' | 'anomaly' | 'output'
   rule: string
   message: string
+  remediation?: string[]
+  severity?: 'low' | 'medium' | 'high' | 'critical'
 }
 
 export interface AuditEntry {
@@ -216,4 +219,11 @@ export interface DashboardPolicy {
   enabled: boolean
   port: number
   bind: string
+}
+
+export interface SessionStartConfig {
+  enabled: boolean
+  collectMetadata: boolean
+  ollamaStatus: boolean
+  preloadContext: boolean
 }
